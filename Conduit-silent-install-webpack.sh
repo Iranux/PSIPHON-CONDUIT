@@ -1,17 +1,17 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v9.0 (CORRECTED FLOW)               ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v10.0 (NO-LOOP EDITION)             ║
 # ║                                                                   ║
-# ║  • ORDER: 1. apt update -> 2. Deep Clean -> 3. Install            ║
-# ║  • MENU: Scroll Mode (No 'clear' command = No Flicker)            ║
-# ║  • FIREWALL: Smart Iran-VIP (Trackers Allowed / Users Throttled)  ║
+# ║  • FLICKER FIX: Menu runs ONCE and exits. Zero loops.             ║
+# ║  • ORDER: apt update -> Nuclear Clean -> Install.                 ║
+# ║  • FIREWALL: Smart Iran-VIP logic included.                       ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
 # --- 1. ROOT CHECK ---
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: Please run 'sudo su' before running this script."
+    echo "Error: Please run 'sudo su' first."
     exit 1
 fi
 
@@ -35,10 +35,10 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
-# 3. FIRST ACTION: UPDATE SYSTEM (AS REQUESTED)
+# 3. FIRST ACTION: UPDATE SYSTEM
 #═══════════════════════════════════════════════════════════════════════
 echo -e "${BLUE}[INFO] Step 1: Updating System Repositories...${NC}"
-apt-get update -q -y || echo -e "${YELLOW}[!] Apt update had warnings, continuing...${NC}"
+apt-get update -q -y || echo -e "${YELLOW}[!] Apt update warning (ignoring)...${NC}"
 
 #═══════════════════════════════════════════════════════════════════════
 # 4. SECOND ACTION: NUCLEAR CLEANUP
@@ -70,7 +70,7 @@ rm -rf "$INSTALL_DIR/menu.sh"
 #═══════════════════════════════════════════════════════════════════════
 echo -e "${BLUE}[INFO] Step 3: Installing Dependencies...${NC}"
 
-# Install deps (ipset is critical)
+# Install deps
 if [ -f /etc/debian_version ]; then
     apt-get install -y -q curl gawk tcpdump geoip-bin geoip-database qrencode ipset >/dev/null 2>&1 || true
 elif [ -f /etc/alpine-release ]; then
@@ -131,16 +131,15 @@ do_enable() {
     curl -sL "$IP_LIST" | while read line; do [[ "$line" =~ ^# ]] || ipset add $IPSET "$line" -exist; done
     
     iptables -F INPUT
-    # 1. Essential Access
+    # 1. Essential
     iptables -A INPUT -i lo -j ACCEPT
     iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
     
-    # 2. Iran VIP (Unlimited)
+    # 2. Iran VIP
     iptables -A INPUT -m set --match-set $IPSET src -j ACCEPT
     
-    # 3. World (Throttled for Trackers)
-    # Allows 3 connections per minute (enough for trackers, unusable for users)
+    # 3. World Throttled
     iptables -A INPUT -m state --state NEW -m recent --set
     iptables -A INPUT -m state --state NEW -m recent --update --seconds 60 --hitcount 3 -j DROP
     iptables -A INPUT -j ACCEPT
@@ -166,7 +165,7 @@ EOF
 chmod +x "$FW_SCRIPT"
 
 #═══════════════════════════════════════════════════════════════════════
-# 8. AUTO-START SERVICE (PERSISTENT)
+# 8. AUTO-START SERVICE
 #═══════════════════════════════════════════════════════════════════════
 cat > /etc/systemd/system/conduit.service << EOF
 [Unit]
@@ -190,7 +189,7 @@ if command -v systemctl &>/dev/null; then
 fi
 
 #═══════════════════════════════════════════════════════════════════════
-# 9. SCROLL MENU (ABSOLUTELY NO FLICKER)
+# 9. ONE-SHOT MENU (NO LOOPS = NO FLICKER)
 #═══════════════════════════════════════════════════════════════════════
 cat << 'EOF' > "$MENU_SCRIPT"
 #!/bin/bash
@@ -201,60 +200,55 @@ RED='\033[1;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Clear screen ONLY ONCE at startup, never inside the loop
+# Clear screen once
 clear
 
-while true; do
-    echo ""
-    echo -e "${CYAN}══════ 🚀 CONDUIT v9.0 (SCROLL MODE) ══════${NC}"
+echo -e "${CYAN}═══ 🚀 CONDUIT v10.0 (ONE-SHOT) ═══${NC}"
 
-    # Status Check
-    if docker ps | grep -q conduit; then
-        echo -e "STATUS:   ${GREEN}RUNNING${NC}"
-    else
-        echo -e "STATUS:   ${RED}STOPPED${NC}"
-    fi
+# Status Check
+if docker ps | grep -q conduit; then
+    echo -e "STATUS:   ${GREEN}RUNNING${NC}"
+else
+    echo -e "STATUS:   ${RED}STOPPED${NC}"
+fi
 
-    # Firewall Check
-    if iptables -L INPUT 2>/dev/null | grep -q "match-set iran_ips"; then
-        echo -e "FILTER:   ${GREEN}SMART (Iran VIP)${NC}"
-    else
-        echo -e "FILTER:   ${YELLOW}OPEN (No Limits)${NC}"
-    fi
+# Firewall Check
+if iptables -L INPUT 2>/dev/null | grep -q "match-set iran_ips"; then
+    echo -e "FILTER:   ${GREEN}SMART (Iran VIP)${NC}"
+else
+    echo -e "FILTER:   ${YELLOW}OPEN (No Limits)${NC}"
+fi
 
-    echo "-------------------------------------"
-    echo " [1] Active Users"
-    echo " [2] View Logs"
-    echo " [3] Restart Service"
-    echo " [4] Stop Service"
-    echo " [5] Enable Smart Filter"
-    echo " [6] Disable Filter"
-    echo " [0] Exit"
-    echo "-------------------------------------"
-    
-    # Read blocks execution. No loop = No refresh = No flicker.
-    read -p "Select option > " choice
-    echo ""
-    
-    case $choice in
-        1)
-            echo "--- Active Users ---"
-            ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr | head -n 15
-            echo "--------------------"
-            ;;
-        2) docker logs --tail 50 -f conduit ;;
-        3) docker restart conduit; echo "Restarted." ;;
-        4) docker stop conduit; echo "Stopped." ;;
-        5) bash "$FW" enable ;;
-        6) bash "$FW" disable ;;
-        0) exit 0 ;;
-        *) echo "Invalid option." ;;
-    esac
-    
-    echo ""
-    echo -e "${YELLOW}(Press Enter to show menu...)${NC}"
-    read
-done
+echo "-------------------------------------"
+echo " [1] Active Users (Snapshot)"
+echo " [2] View Logs (Press Ctrl+C to exit)"
+echo " [3] Restart Service"
+echo " [4] Stop Service"
+echo " [5] Enable Smart Filter"
+echo " [6] Disable Filter"
+echo " [0] Exit"
+echo "-------------------------------------"
+
+read -p "Select option > " choice
+echo ""
+
+case $choice in
+    1)
+        echo "--- Active Users ---"
+        ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr | head -n 15
+        echo "--------------------"
+        ;;
+    2) docker logs --tail 50 -f conduit ;;
+    3) docker restart conduit; echo "Restarted." ;;
+    4) docker stop conduit; echo "Stopped." ;;
+    5) bash "$FW" enable ;;
+    6) bash "$FW" disable ;;
+    0) exit 0 ;;
+    *) echo "Invalid option." ;;
+esac
+
+echo ""
+echo -e "${YELLOW}Done. Type 'conduit' to open menu again.${NC}"
 EOF
 chmod +x "$MENU_SCRIPT"
 rm -f /usr/local/bin/conduit
@@ -269,5 +263,5 @@ echo "------------------------------------------------"
 echo -e " To open menu: ${YELLOW}conduit${NC}"
 echo "------------------------------------------------"
 
-# Force open menu for the user
+# Run menu once
 /usr/local/bin/conduit
