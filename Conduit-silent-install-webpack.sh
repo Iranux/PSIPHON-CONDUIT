@@ -1,21 +1,23 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║      🚀 PSIPHON CONDUIT MANAGER v1.3 (SILENT + AUTO UPDATE)      ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v1.4 (SILENT + AUTO ROOT + UPDATE)  ║
 # ║                                                                   ║
 # ║  Customized for: 50 Clients / 5 Mbps / 1 Container                ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
+# --- AUTO ELEVATE TO ROOT ---
+# If script is run as normal user, restart it with sudo automatically
+if [ "$EUID" -ne 0 ]; then
+    echo "Requesting root privileges..."
+    exec sudo bash "$0" "$@"
+fi
+# ----------------------------
+
 set -eo pipefail
 
-# Require bash
-if [ -z "$BASH_VERSION" ]; then
-    echo "Error: This script requires bash. Please run with: bash $0"
-    exit 1
-fi
-
-VERSION="1.3"
+VERSION="1.4"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -59,20 +61,12 @@ log_error() {
     echo -e "${RED}[✗]${NC} $1"
 }
 
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        log_error "This script must be run as root (use sudo)"
-        exit 1
-    fi
-}
-
 detect_os() {
     OS="unknown"
     OS_FAMILY="unknown"
     HAS_SYSTEMD=false
     PKG_MANAGER="unknown"
     
-    # Detect OS
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS="$ID"
@@ -80,7 +74,6 @@ detect_os() {
         OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     fi
     
-    # Map OS family and package manager
     case "$OS" in
         ubuntu|debian|linuxmint|pop|elementary|zorin|kali|raspbian)
             OS_FAMILY="debian"
@@ -111,7 +104,7 @@ detect_os() {
     log_info "Detected: $OS ($OS_FAMILY family), Package manager: $PKG_MANAGER"
 }
 
-# --- NEW FUNCTION: AUTO UPDATE ---
+# --- AUTO UPDATE SYSTEM ---
 perform_system_update() {
     log_info "Running system update ($PKG_MANAGER update)..."
     case "$PKG_MANAGER" in
@@ -187,7 +180,6 @@ check_dependencies() {
         install_package tcpdump
     fi
 
-    # GeoIP
     if ! command -v geoiplookup &>/dev/null && ! command -v mmdblookup &>/dev/null; then
         case "$PKG_MANAGER" in
             apt)
@@ -420,7 +412,6 @@ EOF
     fi
 }
 
-# (Minimal wrapper to download/use full manager)
 create_management_script() {
     local tmp_script="$INSTALL_DIR/conduit.tmp.$$"
     cat > "$tmp_script" << 'MANAGEMENT'
@@ -449,14 +440,13 @@ setup_tracker_service() {
 #═══════════════════════════════════════════════════════════════════════
 
 main() {
-    print_header
-    check_root
     detect_os
     
     # --- AUTO UPDATE STEP ---
     perform_system_update
     # ------------------------
     
+    print_header
     check_dependencies
     
     prompt_settings
