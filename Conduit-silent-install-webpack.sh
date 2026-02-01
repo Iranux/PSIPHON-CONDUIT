@@ -1,11 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v2.0 (FLICKER-FREE EDITION)         ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v2.1 (CLEAN STATIC EDITION)         ║
 # ║                                                                   ║
-# ║  • Fixes: Removing screen flashing using ANSI cursor reset        ║
-# ║  • Feature: Buffered output for smooth rendering                  ║
-# ║  • Settings: 50 Clients / 5 Mbps / 1 Container                    ║
+# ║  • FIXED: Removed flickering table from main menu                 ║
+# ║  • STABLE: Main menu is now static (no auto-refresh)              ║
+# ║  • FEATURE: Added dedicated "Live Monitor" submenu using 'watch'  ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -24,17 +24,17 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 set -e
 
-VERSION="2.0"
+VERSION="2.1"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
 BACKUP_DIR="$INSTALL_DIR/backups"
 
 # Colors
-GREEN='\033[1;32m'
-RED='\033[1;31m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
-BLUE='\033[1;34m'
-CYAN='\033[1;36m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
@@ -64,7 +64,7 @@ detect_os() {
 #═══════════════════════════════════════════════════════════════════════
 
 deep_clean_system() {
-    log_warn "Performing System Check..."
+    log_warn "Performing System Check & Cleanup..."
     killall apt apt-get dpkg 2>/dev/null || true
     if [ "$PKG_MANAGER" = "apt" ]; then
         rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock*
@@ -134,15 +134,50 @@ save_conf() {
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# SMOOTH DASHBOARD SCRIPT
+# CLEAN DASHBOARD SCRIPT
 #═══════════════════════════════════════════════════════════════════════
 
 create_custom_menu() {
-    log_info "Installing Smooth Dashboard..."
+    log_info "Installing Clean Dashboard..."
     local menu_path="$INSTALL_DIR/conduit"
+    local stats_helper="$INSTALL_DIR/stats_helper.sh"
     
+    # 1. Create a helper script for 'watch' to use (Stats logic)
+    cat << 'EOF' > "$stats_helper"
+#!/bin/bash
+CYAN='\033[1;36m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${CYAN}--- LIVE USER MONITOR (Updates every 2s) ---${NC}"
+printf "%-20s %-10s %-20s\n" "IP ADDRESS" "COUNT" "COUNTRY"
+echo "----------------------------------------------------"
+
+connections=$(ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr)
+total=$(echo "$connections" | grep -c . || true)
+
+if [ -z "$connections" ]; then
+    echo -e "${YELLOW}No active users yet.${NC}"
+else
+    echo "$connections" | head -n 15 | while read count ip; do
+        [ -z "$ip" ] && continue
+        country=$(geoiplookup "$ip" 2>/dev/null | awk -F: '{print $2}' | sed 's/^ //')
+        [ -z "$country" ] && country="Unknown"
+        printf "%-20s ${GREEN}%-10s${NC} %-20s\n" "$ip" "$count" "${country:0:20}"
+    done
+fi
+echo "----------------------------------------------------"
+echo -e "TOTAL USERS: ${GREEN}$total${NC}"
+EOF
+    chmod +x "$stats_helper"
+
+    # 2. Create the Main Menu (Static)
     cat << 'EOF' > "$menu_path"
 #!/bin/bash
+
+# Define paths
+STATS_SCRIPT="/opt/conduit/stats_helper.sh"
 
 # ANSI Colors
 CYAN='\033[1;36m'
@@ -150,116 +185,69 @@ GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 RED='\033[1;31m'
 NC='\033[0m'
-DIM='\033[2m'
 
-# Move cursor to top-left
-move_home() { printf "\033[H"; }
-# Clear from cursor to end of screen
-clear_end() { printf "\033[J"; }
-# Hide/Show Cursor
-hide_cursor() { printf "\033[?25l"; }
-show_cursor() { printf "\033[?25h"; }
-
-trap show_cursor EXIT
-
-main_menu() {
+while true; do
     clear
-    hide_cursor
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║             🚀 CONDUIT MANAGER (Static Menu)               ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
     
-    while true; do
-        move_home
-        
-        # --- BUILD OUTPUT BUFFER ---
-        # We construct the whole screen in a variable first to avoid tearing
-        
-        OUTPUT="${CYAN}╔════════════════════════════════════════════════════════════╗${NC}\n"
-        OUTPUT+="${CYAN}║              🌍 LIVE USER MONITORING                       ║${NC}\n"
-        OUTPUT+="${CYAN}╚════════════════════════════════════════════════════════════╝${NC}\n"
-        
-        # Get Data
-        connections=$(ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr)
-        total_users=$(echo "$connections" | grep -c . || true)
-        
-        if [ -z "$connections" ]; then
-            OUTPUT+="\n${DIM}  Waiting for connections...${NC}\n"
-            OUTPUT+="${DIM}  (It takes time for Psiphon network to find your node)${NC}\n"
-            OUTPUT+="\n"
-        else
-            OUTPUT+="\n"
-            OUTPUT+=$(printf "  %-20s %-10s %-20s" "IP ADDRESS" "COUNT" "COUNTRY")
-            OUTPUT+="\n  --------------------------------------------------------\n"
-            
-            # Process lines
-            count_lines=0
-            while read count ip; do
-                [ -z "$ip" ] && continue
-                if [ "$count_lines" -ge 8 ]; then break; fi # Limit to 8 rows
-                
-                country=$(geoiplookup "$ip" 2>/dev/null | awk -F: '{print $2}' | sed 's/^ //')
-                if [[ "$country" == *"can't resolve"* ]] || [[ -z "$country" ]]; then country="Unknown"; fi
-                
-                # Trim country name if too long
-                country=${country:0:20}
-                
-                OUTPUT+=$(printf "  %-20s ${GREEN}%-10s${NC} %-20s\n" "$ip" "$count" "$country")
-                ((count_lines++))
-            done <<< "$connections"
-            
-            OUTPUT+="  --------------------------------------------------------\n"
-            OUTPUT+="  TOTAL UNIQUE USERS: ${GREEN}$total_users${NC}\n"
-        fi
-        
-        OUTPUT+="\n${CYAN}--- MAIN MENU -----------------------------------${NC}\n"
-        OUTPUT+="  [1] Refresh View   [3] Restart Service\n"
-        OUTPUT+="  [2] View Logs      [4] Stop Service\n"
-        OUTPUT+="  [0] Exit\n"
-        OUTPUT+="\n"
-        OUTPUT+="  ${YELLOW}Auto-refreshing... Press number to select.${NC}\n"
-        
-        # Print the whole buffer at once
-        echo -e "$OUTPUT"
-        clear_end
-        
-        # Wait for input with timeout (Non-blocking check)
-        # We use 'read -t' to create the refresh interval
-        if read -t 5 -n 1 choice; then
-            case $choice in
-                1) continue ;;
-                2) 
-                    show_cursor
-                    echo -e "\n${CYAN}--- LOGS (Press CTRL+C to exit) ---${NC}"
-                    docker logs -f --tail 50 conduit
-                    hide_cursor
-                    clear
-                    ;;
-                3)
-                    echo -e "\n${YELLOW}Restarting...${NC}"
-                    docker restart conduit >/dev/null
-                    sleep 2
-                    ;;
-                4)
-                    echo -e "\n${RED}Stopping...${NC}"
-                    docker stop conduit >/dev/null
-                    sleep 1
-                    ;;
-                0) 
-                    show_cursor
-                    clear
-                    exit 0 
-                    ;;
-                *) ;;
-            esac
-        fi
-    done
-}
-
-main_menu
+    # Simple Status Check
+    if docker ps | grep -q conduit; then
+        echo -e "  STATUS: ${GREEN}RUNNING${NC}"
+    else
+        echo -e "  STATUS: ${RED}STOPPED${NC}"
+    fi
+    
+    echo ""
+    echo "  [1] 🌍 Live Monitor (Show Users)"
+    echo "  [2] 📄 View Logs"
+    echo "  [3] 🔄 Restart Service"
+    echo "  [4] 🛑 Stop Service"
+    echo "  [0] 🚪 Exit"
+    echo ""
+    read -p "  Select option: " choice
+    
+    case $choice in
+        1)
+            # Use 'watch' for flicker-free updates
+            if command -v watch >/dev/null; then
+                watch -c -n 2 "$STATS_SCRIPT"
+            else
+                # Fallback if watch is missing
+                bash "$STATS_SCRIPT"
+                echo ""
+                read -p "Press Enter to return..."
+            fi
+            ;;
+        2) 
+            echo -e "\n${CYAN}--- LOGS (Press CTRL+C to exit) ---${NC}"
+            docker logs -f --tail 50 conduit
+            ;;
+        3)
+            echo -e "\n${YELLOW}Restarting...${NC}"
+            docker restart conduit
+            sleep 2
+            ;;
+        4)
+            echo -e "\n${RED}Stopping...${NC}"
+            docker stop conduit
+            sleep 1
+            ;;
+        0) 
+            clear
+            exit 0 
+            ;;
+        *) ;;
+    esac
+done
 EOF
 
     chmod +x "$menu_path"
     rm -f /usr/local/bin/conduit
     ln -s "$menu_path" /usr/local/bin/conduit
-    log_success "Smooth Dashboard Installed."
+    log_success "Clean Dashboard Installed."
 }
 
 #═══════════════════════════════════════════════════════════════════════
@@ -278,7 +266,7 @@ create_custom_menu
 echo ""
 log_success "INSTALLATION COMPLETE."
 echo "------------------------------------------------"
-echo "Starting Smooth Dashboard in 2 seconds..."
+echo "Starting Dashboard..."
 echo "------------------------------------------------"
 sleep 2
 
