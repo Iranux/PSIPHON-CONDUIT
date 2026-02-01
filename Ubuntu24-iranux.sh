@@ -1,28 +1,31 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║      🚀 PSIPHON CONDUIT MANAGER v1.2 (IRANUX PATCHED)            ║
+# ║      🚀 PSIPHON CONDUIT MANAGER v1.2 (IRANUX MOD)                ║
 # ║                                                                   ║
-# ║  • Base: Full Original Code (Dashboard, Telegram, QR, etc.)       ║
-# ║  • Mod: Smart Guard + Nuclear Clean + Hardcoded Settings          ║
-# ║  • Fix: /dev/tty Input for Curl Pipe Compatibility                ║
+# ║  Based on Original Script provided by User                        ║
+# ║  Modifications:                                                   ║
+# ║   1. Hardcoded 50 Clients / 10 Mbps                               ║
+# ║   2. Smart Guard (12h Grace Period)                               ║
+# ║   3. Nuclear Clean on install                                     ║
+# ║   4. Access Denied Fix (Local Build Fallback)                     ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 
 set -eo pipefail
 
-# --- IRANUX CONFIGURATION (HARDCODED) ---
+# --- [MOD 1] HARDCODED SETTINGS ---
 MAX_CLIENTS=50
 BANDWIDTH=10
 CONTAINER_COUNT=1
-# EXACT IMAGE FROM YOUR ORIGINAL FILE:
+# Original Image (We try this first, pass to fallback if fails)
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 
 VERSION="1.2"
 INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
 BACKUP_DIR="$INSTALL_DIR/backups"
+# Smart Guard Files
 INSTALL_DATE_FILE="$INSTALL_DIR/install_date"
 IRAN_IP_LIST="$INSTALL_DIR/iran_ips.txt"
-FORCE_REINSTALL=true
 
 # Colors
 RED='\033[0;31m'
@@ -30,13 +33,10 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-BOLD='\033[1m'
-DIM='\033[2m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
-# 1. Utility Functions
+# 1. UTILITY FUNCTIONS (Kept from Original)
 #═══════════════════════════════════════════════════════════════════════
 
 print_header() {
@@ -76,76 +76,93 @@ detect_os() {
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 2. NUCLEAR CLEAN (IRANUX)
+# 2. NUCLEAR CLEAN (MOD 2: Your Request)
 #═══════════════════════════════════════════════════════════════════════
 nuclear_clean() {
     log_warn "Performing Nuclear Clean (Wiping all traces)..."
     docker stop conduit 2>/dev/null || true
     docker rm -f conduit 2>/dev/null || true
+    # Remove scaled containers
     for i in {2..5}; do
         docker stop "conduit-$i" 2>/dev/null || true
         docker rm -f "conduit-$i" 2>/dev/null || true
     done
+    # Remove services
     systemctl stop conduit 2>/dev/null || true
     systemctl disable conduit 2>/dev/null || true
     systemctl stop conduit-guard 2>/dev/null || true
     rm -f /etc/systemd/system/conduit.service
     rm -f /etc/systemd/system/conduit-guard.service
     rm -f /usr/local/bin/conduit
+    # Reload daemon
     systemctl daemon-reload 2>/dev/null || true
     log_success "System cleaned."
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 3. Dependencies
+# 3. DEPENDENCIES
 #═══════════════════════════════════════════════════════════════════════
 check_dependencies() {
     log_info "Installing dependencies..."
     export DEBIAN_FRONTEND=noninteractive
+    
+    # Install base tools
     if [ "$PKG_MANAGER" = "apt" ]; then
         apt-get update -q
-        apt-get install -y -q curl docker.io ipset iptables jq qrencode
+        apt-get install -y -q curl docker.io ipset iptables jq qrencode unzip wget
     elif [ "$PKG_MANAGER" = "yum" ]; then
-        yum install -y curl docker ipset iptables jq qrencode
+        yum install -y curl docker ipset iptables jq qrencode unzip wget
     fi
+    
     systemctl enable --now docker 2>/dev/null || true
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 4. SMART GUARD (IRANUX)
+# 4. SMART GUARD (MOD 3: Your Request)
 #═══════════════════════════════════════════════════════════════════════
 setup_smart_guard() {
-    log_info "Configuring Smart Guard..."
+    log_info "Configuring Smart Guard (Geo-Filtering)..."
     mkdir -p "$INSTALL_DIR"
     
+    # 1. Set Install Date
     if [ ! -f "$INSTALL_DATE_FILE" ]; then
         date +%s > "$INSTALL_DATE_FILE"
     fi
     
-    # Download Iran IP list
-    curl -sL "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ir.cidr" -o "$IRAN_IP_LIST" || echo "1.0.0.0/8" > "$IRAN_IP_LIST"
+    # 2. Download Iran IP List
+    if [ ! -f "$IRAN_IP_LIST" ]; then
+        log_info "Downloading Iran IP database..."
+        curl -sL "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ir.cidr" -o "$IRAN_IP_LIST" || echo "1.0.0.0/8" > "$IRAN_IP_LIST"
+    fi
     
-    # Create Guard Script
+    # 3. Create Guard Logic Script
     cat > "$INSTALL_DIR/smart_guard.sh" << 'EOF'
 #!/bin/bash
 INSTALL_DIR="/opt/conduit"
 INSTALL_DATE_FILE="$INSTALL_DIR/install_date"
 IRAN_IP_LIST="$INSTALL_DIR/iran_ips.txt"
+
+# Wait for docker network to be ready
 sleep 10
+
 if [ -f "$INSTALL_DATE_FILE" ]; then
     START_TIME=$(cat "$INSTALL_DATE_FILE")
     CURRENT_TIME=$(date +%s)
     DIFF_HOURS=$(( (CURRENT_TIME - START_TIME) / 3600 ))
     
-    # Reset Rules
+    # Clear old rules to prevent duplication
     iptables -D INPUT -p tcp --dport 1080 -j ACCEPT 2>/dev/null || true
     iptables -F INPUT 2>/dev/null || true
     ipset destroy iran_ips 2>/dev/null || true
 
     if [ "$DIFF_HOURS" -ge 12 ]; then
+        # Create IPSet
         ipset create iran_ips hash:net
         while read line; do ipset add iran_ips "$line" -!; done < "$IRAN_IP_LIST"
+        
+        # Rule 1: Allow Iran IPs
         iptables -A INPUT -p tcp --dport 1080 -m set --match-set iran_ips src -j ACCEPT
+        # Rule 2: Limit others (300s = 5 mins)
         iptables -A INPUT -p tcp --dport 1080 -m recent --name non_iran --set
         iptables -A INPUT -p tcp --dport 1080 -m recent --name non_iran --update --seconds 300 -j DROP
     fi
@@ -153,10 +170,11 @@ fi
 EOF
     chmod +x "$INSTALL_DIR/smart_guard.sh"
     
+    # 4. Create Service
     cat > /etc/systemd/system/conduit-guard.service << EOF
 [Unit]
 Description=Conduit Smart Guard
-After=docker.service
+After=network.target docker.service
 [Service]
 Type=oneshot
 ExecStart=/bin/bash $INSTALL_DIR/smart_guard.sh
@@ -170,26 +188,15 @@ EOF
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 5. Deploy (Using ORIGINAL IMAGE)
+# 5. DEPLOYMENT CORE (MOD 4: Fix Access Denied)
 #═══════════════════════════════════════════════════════════════════════
 run_conduit() {
-    log_info "Deploying Conduit ($CONDUIT_IMAGE)..."
+    log_info "Deploying Conduit..."
     
-    # Logout to prevent "Access Denied" if credentials are stale
-    docker logout ghcr.io >/dev/null 2>&1 || true
-
-    # Try Pulling Original Image
-    if ! docker pull "$CONDUIT_IMAGE"; then
-        log_warn "Primary image failed. Building locally (Fallback Strategy)..."
-        # Fallback to local build if repo is private/blocked (guarantees success)
-        docker run -d --name conduit --restart unless-stopped --network host \
-            -v conduit-data:/home/conduit/data \
-            ubuntu:24.04 bash -c "apt update && apt install -y wget unzip && \
-            wget -qO conduit.zip https://github.com/Psiphon-Inc/psiphon-conduit/releases/latest/download/psiphon-conduit-linux-x86_64.zip && \
-            unzip conduit.zip && chmod +x psiphon-conduit-linux-x86_64 && \
-            ./psiphon-conduit-linux-x86_64 start --max-clients $MAX_CLIENTS --bandwidth $BANDWIDTH --stats-file"
-    else
-        # Standard Deployment
+    # Attempt to pull the original image
+    # If it fails (Access Denied), we execute the Fallback Strategy
+    if docker pull "$CONDUIT_IMAGE" > /dev/null 2>&1; then
+        # --- SUCCESS PATH ---
         docker run -d \
             --name conduit \
             --restart unless-stopped \
@@ -198,11 +205,49 @@ run_conduit() {
             -v conduit-data:/home/conduit/data \
             "$CONDUIT_IMAGE" \
             start --max-clients "$MAX_CLIENTS" --bandwidth "$BANDWIDTH" --stats-file
+    else
+        # --- FALLBACK PATH (Local Build) ---
+        log_warn "Original image access denied. Building locally (Robust Fix)..."
+        
+        # Download Binary directly (No Git Password needed)
+        mkdir -p /tmp/conduit_build
+        cd /tmp/conduit_build
+        
+        # Download latest binary from Official Psiphon Repo
+        wget -qO conduit.zip "https://github.com/Psiphon-Inc/psiphon-conduit/releases/latest/download/psiphon-conduit-linux-x86_64.zip"
+        unzip -o conduit.zip
+        
+        # Rename binary
+        find . -type f -name "psiphon-conduit*" ! -name "*.zip" -exec mv {} conduit \;
+        chmod +x conduit
+
+        # Create minimal Dockerfile
+        cat <<EOF > Dockerfile
+FROM ubuntu:24.04
+COPY conduit /usr/local/bin/conduit
+RUN chmod +x /usr/local/bin/conduit
+ENTRYPOINT ["/usr/local/bin/conduit"]
+EOF
+        # Build image named 'conduit-local'
+        docker build -t conduit-local . > /dev/null
+        
+        # Run Container
+        docker run -d \
+            --name conduit \
+            --restart unless-stopped \
+            --network host \
+            -v conduit-data:/home/conduit/data \
+            conduit-local \
+            start --max-clients "$MAX_CLIENTS" --bandwidth "$BANDWIDTH" --stats-file
+            
+        # Cleanup
+        rm -rf /tmp/conduit_build
     fi
 
+    # Check status
     sleep 3
     if docker ps | grep -q conduit; then
-        log_success "Conduit Started Successfully!"
+        log_success "Conduit is RUNNING (Clients: $MAX_CLIENTS, BW: ${BANDWIDTH}Mbps)"
     else
         log_error "Conduit failed to start. Logs:"
         docker logs conduit 2>&1 | tail -5
@@ -213,12 +258,14 @@ run_conduit() {
 setup_autostart() {
     cat > /etc/systemd/system/conduit.service << EOF
 [Unit]
-Description=Psiphon Conduit
-After=docker.service
+Description=Psiphon Conduit Service
+After=network.target docker.service
+Wants=docker.service
 [Service]
+Type=oneshot
+RemainAfterExit=yes
 ExecStart=/usr/bin/docker start conduit
 ExecStop=/usr/bin/docker stop conduit
-RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -226,7 +273,7 @@ EOF
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 6. Management Script (THE FULL ORIGINAL MENU + PATCHES)
+# 6. MANAGEMENT MENU (MOD 5: Fix Flicker + Add Smart Guard)
 #═══════════════════════════════════════════════════════════════════════
 create_management_script() {
     cat > "/usr/local/bin/conduit" << 'EOF'
@@ -236,15 +283,13 @@ GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
-INSTALL_DIR="/opt/conduit"
 
 show_dashboard() {
-    # Using watch for flicker-free update
     watch -n 2 "docker stats conduit --no-stream"
 }
 
 show_logs() {
-    docker logs -f --tail 100 conduit | grep -v "\[STATS\]"
+    docker logs -f --tail 50 conduit | grep -v "\[STATS\]"
 }
 
 show_menu() {
@@ -255,8 +300,6 @@ show_menu() {
         echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo -e "${CYAN}─────────────────────────────────────────────────────────────────${NC}"
-        echo -e "${CYAN}  MAIN MENU${NC}"
-        echo -e "${CYAN}─────────────────────────────────────────────────────────────────${NC}"
         echo -e "  1. 📈 View status dashboard"
         echo -e "  2. 📊 Live connection stats"
         echo -e "  3. 📋 View logs"
@@ -265,7 +308,7 @@ show_menu() {
         echo -e "  6. ⏹️  Stop Conduit"
         echo -e "  7. 🔁 Restart Conduit"
         echo ""
-        echo -e "  9. ⚙️  Settings & Tools"
+        echo -e "  9. ⚙️  Settings"
         echo -e "  S. 🛡️  Smart Guard Status (New)"
         echo -e "  0. 🚪 Exit"
         echo -e "${CYAN}─────────────────────────────────────────────────────────────────${NC}"
@@ -278,7 +321,7 @@ show_menu() {
         fi
         echo ""
 
-        # FIX: Read from /dev/tty to allow input even when piped via curl
+        # FIX: Force reading from TTY to fix Curl piping issues
         read -p "  Enter choice: " choice < /dev/tty || exit 0
 
         case "$choice" in
@@ -288,7 +331,7 @@ show_menu() {
             5) docker start conduit; echo "Started."; sleep 1 ;;
             6) docker stop conduit; echo "Stopped."; sleep 1 ;;
             7) docker restart conduit; echo "Restarted."; sleep 1 ;;
-            9) echo "Settings are fixed in this version (50 Users / 10 Mbps)."; sleep 2 ;;
+            9) echo "Settings are managed via installer (50 Users/10Mbps fixed)."; sleep 2 ;;
             s|S) 
                start=$(cat /opt/conduit/install_date 2>/dev/null || echo 0)
                diff=$(( ($(date +%s) - start) / 3600 ))
@@ -296,7 +339,7 @@ show_menu() {
                echo -e "  ${CYAN}--- Smart Guard Status ---${NC}"
                echo "  Server Uptime: $diff hours"
                if [[ $diff -ge 12 ]]; then 
-                   echo -e "  Mode: ${RED}RESTRICTED${NC} (Non-Iran IPs limited to 5m)"
+                   echo -e "  Mode: ${RED}RESTRICTED${NC} (Foreign IPs limited to 5m)"
                else 
                    echo -e "  Mode: ${GREEN}GRACE PERIOD${NC} (Open Access for $((12-diff))h more)"
                fi
@@ -308,11 +351,10 @@ show_menu() {
     done
 }
 
-# Auto-launch menu if interactive
+# Auto-launch
 if [ -t 0 ]; then
     show_menu
 else
-    # Launch menu for first run
     show_menu
 fi
 EOF
@@ -320,38 +362,40 @@ EOF
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# Main Execution
+# MAIN EXECUTION
 #═══════════════════════════════════════════════════════════════════════
 main() {
     print_header
     check_root
     detect_os
     
-    # 1. Clean
+    # 1. Clean (Nuclear)
     nuclear_clean
     
-    # 2. Deps
+    # 2. Dependencies
     check_dependencies
     
-    # 3. Smart Guard
+    # 3. Setup Smart Guard
     setup_smart_guard
     
-    # 4. Deploy (With fallback)
+    # 4. Deploy (Auto-Fallback logic)
     run_conduit
     
     # 5. Persistence
     setup_autostart
     
-    # 6. Menu
+    # 6. Create Menu
     create_management_script
     
     echo ""
     echo -e "${GREEN}✅ INSTALLATION SUCCESSFUL!${NC}"
     echo -e "Type ${BOLD}conduit${NC} to open the menu."
-    sleep 2
     
-    # Launch menu correctly using /dev/tty for input
-    /usr/local/bin/conduit
+    # Launch menu correctly using TTY check
+    if [ -t 0 ]; then
+        sleep 2
+        /usr/local/bin/conduit
+    fi
 }
 
 main "$@"
