@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =================================================================
-# Project: PSIPHON CONDUIT MANAGER (Fixed Official Image)
+# Project: PSIPHON CONDUIT MANAGER (Final Fix)
 # Target OS: Ubuntu 24.04
 # GitHub: https://github.com/Iranux/PSIPHON-CONDUIT
 # =================================================================
@@ -18,53 +18,49 @@ SMART_GUARD_CONF="/etc/conduit/smart_guard.status"
 REPO_RAW_URL="https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/Ubuntu24-iranux.sh"
 
 # --- 1. Root Check ---
-# Automatically upgrades session to root for seamless execution
 if [ "$EUID" -ne 0 ]; then
     exec sudo bash "$0" "$@"
 fi
 
 # --- 2. Nuclear Clean ---
-# Wipes previous failed installations or existing containers
 clean_old_stuff() {
-    echo "[*] Cleaning up existing containers and services..."
+    echo "[*] Cleaning up old instances..."
     docker stop conduit 2>/dev/null || true
     docker rm -f conduit 2>/dev/null || true
     systemctl stop conduit-guard 2>/dev/null || true
     rm -f /etc/systemd/system/conduit-guard.service
 }
 
-# --- 3. Directory & Dependencies ---
-# Creates directories FIRST to prevent 'No such file or directory' errors
+# --- 3. Directory & Environment Preparation ---
 prepare_env() {
-    echo "[*] Creating directories and installing tools..."
+    echo "[*] Creating directories..."
     mkdir -p "$INSTALL_DIR"
     mkdir -p "/etc/conduit"
     
+    echo "[*] Checking/Installing dependencies..."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y && apt-get install -y curl docker.io ipset iptables jq
     systemctl enable --now docker
 }
 
 # --- 4. Smart Guard (Geo-IP) Setup ---
-# Handles the 12h grace period and downloads Iranian IP ranges
 setup_guard() {
     if [ ! -f "$INSTALL_DATE_FILE" ]; then
         date +%s > "$INSTALL_DATE_FILE"
     fi
-    echo "[*] Fetching Iran IP database (Geo-fencing)..."
+    echo "[*] Updating Iran IP database..."
     curl -s -H "Cache-Control: no-cache" https://www.ip2location.com/free/visitor-blocker -d "countryCode=IR&format=cidr" > "$IRAN_IP_LIST" || echo "1.0.0.0/8" > "$IRAN_IP_LIST"
     echo "enabled" > "$SMART_GUARD_CONF"
 }
 
-# --- 5. Firewall Application ---
-# Allows Iran-IPs always; limits others to 300s after 12 hours
+# --- 5. Firewall Engine ---
 apply_rules() {
     [ ! -f "$INSTALL_DATE_FILE" ] && return
     local start_t=$(cat "$INSTALL_DATE_FILE")
     local diff=$(( ($(date +%s) - start_t) / 3600 ))
 
     if [ "$diff" -ge 12 ]; then
-        echo "[!] Grace period expired. Enforcing 5-min session limit for foreigners."
+        echo "[!] Applying 5-minute session limit for non-Iran IPs."
         ipset destroy iran_ips 2>/dev/null || true
         ipset create iran_ips hash:net
         while read -r ip; do [[ -n "$ip" ]] && ipset add iran_ips "$ip" -!; done < "$IRAN_IP_LIST"
@@ -76,12 +72,16 @@ apply_rules() {
     fi
 }
 
-# --- 6. Core Deployment (Official Image) ---
-# Pulls and runs the official psiphon/conduit image
+# --- 6. Core Deployment ---
+# Using a reliable public mirror for Conduit to avoid 'Access Denied'
 deploy() {
-    echo "[*] Pulling Official Psiphon Conduit image..."
-    docker pull psiphon/conduit:latest
-    echo "[*] Starting container with 50 clients limit..."
+    echo "[*] Deploying Conduit Container..."
+    # We use the most stable available image
+    docker pull ssmirr/conduit:latest || docker pull psiphon/conduit:latest || echo "Pulling alternative..."
+    
+    docker run -d --name conduit --restart always --network host \
+        -v /root/conduit_backup:/data ssmirr/conduit:latest \
+        -m $MAX_CLIENTS -b $BANDWIDTH || \
     docker run -d --name conduit --restart always --network host \
         -v /root/conduit_backup:/data psiphon/conduit:latest \
         --max-clients $MAX_CLIENTS --bandwidth $BANDWIDTH
@@ -89,18 +89,18 @@ deploy() {
 
 # --- 7. CLI & Persistence ---
 finalize() {
-    # Management command
     cat <<EOF > /usr/local/bin/conduit
 #!/bin/bash
-echo "--- Conduit Stats ---"
+echo "--- Conduit Status ---"
+docker ps -f name=conduit
+echo "--- Real-time Stats ---"
 docker stats conduit --no-stream
 EOF
     chmod +x /usr/local/bin/conduit
 
-    # Persistence Service
     cat <<EOF > /etc/systemd/system/conduit-guard.service
 [Unit]
-Description=Conduit Smart Guard Persistence
+Description=Conduit Smart Guard
 After=network.target docker.service
 [Service]
 Type=oneshot
@@ -112,11 +112,11 @@ EOF
     systemctl daemon-reload && systemctl enable conduit-guard.service
 }
 
-# --- Main Flow ---
+# --- Execution Flow ---
 if [[ "$1" == "--apply-rules" ]]; then
     apply_rules
 else
-    echo "🚀 Installing Iranux PSIPHON CONDUIT..."
+    echo "🚀 Starting Iranux PSIPHON CONDUIT Installation..."
     clean_old_stuff
     prepare_env
     setup_guard
