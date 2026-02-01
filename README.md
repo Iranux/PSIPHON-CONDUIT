@@ -28,7 +28,7 @@ A robust, self-healing installer for Psiphon Conduit servers. Optimized for stab
 Run the following command as root:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/install.sh | sudo bash
+curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/Install.sh | sudo bash
 ```
 
 Or download and run manually:
