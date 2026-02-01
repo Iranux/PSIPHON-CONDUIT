@@ -1,10 +1,12 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v1.6 (FINAL STABLE)                 ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v1.8 (DEEP CLEAN + FRESH INSTALL)   ║
 # ║                                                                   ║
-# ║  Settings: 50 Clients / 5 Mbps / 1 Container                      ║
-# ║  Fixes: Auto-Root, Silent Apt, Menu Fallback                      ║
+# ║  • Kills stuck apt processes                                      ║
+# ║  • Removes broken lock files                                      ║
+# ║  • Fixes interrupted dpkg installs                                ║
+# ║  • Wipes previous conduit containers for a fresh start            ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -19,15 +21,14 @@ if [ "$EUID" -ne 0 ]; then
         exit 1
     fi
 fi
-# ----------------------------
 
 # Stop apt from asking questions
 export DEBIAN_FRONTEND=noninteractive
 
-# Exit on critical errors only
+# Exit on critical errors
 set -e
 
-VERSION="1.6"
+VERSION="1.8"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -63,43 +64,75 @@ detect_os() {
     log_info "Detected OS: $OS ($PKG_MANAGER)"
 }
 
-perform_system_update() {
-    log_info "Updating package lists..."
-    case "$PKG_MANAGER" in
-        apt) apt-get update -q -y >/dev/null 2>&1 || true ;;
-        dnf|yum) dnf check-update >/dev/null 2>&1 || true ;;
-        apk) apk update >/dev/null 2>&1 || true ;;
-    esac
-}
+#═══════════════════════════════════════════════════════════════════════
+# 1. DEEP CLEAN & REPAIR SYSTEM
+#═══════════════════════════════════════════════════════════════════════
 
-install_package() {
-    local pkg="$1"
-    local flags="-y -q"
-    [ "$PKG_MANAGER" = "apt" ] && flags="$flags -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+deep_clean_system() {
+    log_warn "Starting Deep Clean & System Repair..."
+
+    # 1. Kill stuck package managers
+    log_info "Killing stuck apt/dpkg processes..."
+    killall apt apt-get dpkg 2>/dev/null || true
+    sleep 2
+
+    # 2. Fix APT/DPKG specifics
+    if [ "$PKG_MANAGER" = "apt" ]; then
+        # Remove lock files if they exist (Risky but necessary for stuck systems)
+        rm -f /var/lib/apt/lists/lock 
+        rm -f /var/cache/apt/archives/lock
+        rm -f /var/lib/dpkg/lock*
+
+        log_info "Repairing dpkg database..."
+        dpkg --configure -a || true
+        
+        log_info "Fixing broken dependencies..."
+        apt-get install -f -y || true
+        
+        log_info "Cleaning apt cache..."
+        apt-get clean || true
+        apt-get autoremove -y || true
+        
+        log_info "Updating package lists..."
+        apt-get update -q -y >/dev/null 2>&1 || true
+    fi
+
+    # 3. Wipe previous Conduit Installation
+    log_info "Wiping previous Conduit installation..."
+    if command -v docker &>/dev/null; then
+        # Stop and remove all conduit containers
+        docker stop conduit 2>/dev/null || true
+        docker rm conduit 2>/dev/null || true
+        # Also remove numbered instances just in case
+        docker stop $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
+        docker rm $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
+        
+        # Remove old menu link
+        rm -f /usr/local/bin/conduit
+    fi
     
-    case "$PKG_MANAGER" in
-        apt) apt-get install $flags "$pkg" >/dev/null 2>&1 || true ;;
-        dnf|yum) dnf install -y -q "$pkg" >/dev/null 2>&1 || true ;;
-        apk) apk add --no-cache "$pkg" >/dev/null 2>&1 || true ;;
-    esac
+    log_success "System cleaned and ready for fresh install."
 }
 
-check_dependencies() {
+#═══════════════════════════════════════════════════════════════════════
+# 2. STANDARD INSTALLATION
+#═══════════════════════════════════════════════════════════════════════
+
+install_dependencies() {
     log_info "Installing dependencies..."
-    if ! command -v curl &>/dev/null; then install_package curl; fi
-    if ! command -v awk &>/dev/null; then install_package gawk; fi
-    # Try to install extras but don't fail if they miss
-    install_package tcpdump
-    install_package qrencode
+    local pkgs="curl gawk tcpdump geoip-bin geoip-database qrencode"
+    
+    # Simple install loop
+    if [ "$PKG_MANAGER" = "apt" ]; then
+        apt-get install -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $pkgs || true
+    elif [ "$PKG_MANAGER" = "apk" ]; then
+        apk add --no-cache curl gawk tcpdump geoip qrencode || true
+    fi
 }
-
-#═══════════════════════════════════════════════════════════════════════
-# Core Logic
-#═══════════════════════════════════════════════════════════════════════
 
 install_docker() {
     if command -v docker &>/dev/null; then
-        log_success "Docker already installed"
+        log_success "Docker is present."
         return 0
     fi
     log_info "Installing Docker..."
@@ -108,34 +141,31 @@ install_docker() {
         service docker start || true
     else
         if ! curl -fsSL https://get.docker.com | sh >/dev/null 2>&1; then
-             log_warn "Docker script failed, trying package manager..."
-             install_package docker.io
-             install_package docker-ce
+             log_warn "Docker script failed, trying fallback..."
+             if [ "$PKG_MANAGER" = "apt" ]; then apt-get install -y docker.io || true; fi
         fi
-        systemctl enable docker >/dev/null 2>&1 || true
         systemctl start docker >/dev/null 2>&1 || true
+        systemctl enable docker >/dev/null 2>&1 || true
     fi
 }
 
+# Keep the identity if we can, otherwise it's a fresh start
 check_restore() {
     [ ! -d "$BACKUP_DIR" ] && return 0
     local backup=$(ls -t "$BACKUP_DIR"/conduit_key_*.json 2>/dev/null | head -1)
     [ -z "$backup" ] && return 0
     
-    log_info "Restoring backup: $(basename "$backup")"
+    log_info "Found previous backup. Restoring Identity..."
     docker volume create conduit-data >/dev/null 2>&1 || true
-    # Use a temp container to copy file
     if docker run --rm -v conduit-data:/data -v "$BACKUP_DIR":/bkp alpine sh -c "cp /bkp/$(basename "$backup") /data/conduit_key.json && chown 1000:1000 /data/conduit_key.json"; then
         log_success "Identity restored."
     fi
 }
 
 run_conduit() {
-    log_info "Starting Conduit (50 clients, 5Mbps)..."
-    docker stop conduit >/dev/null 2>&1 || true
-    docker rm conduit >/dev/null 2>&1 || true
+    log_info "Starting Conduit (Fresh Container)..."
     
-    # Ensure volume
+    # Ensure volume exists and permissions are correct
     docker volume create conduit-data >/dev/null 2>&1 || true
     docker run --rm -v conduit-data:/data alpine chown -R 1000:1000 /data >/dev/null 2>&1 || true
 
@@ -147,7 +177,7 @@ run_conduit() {
         --network host \
         "$CONDUIT_IMAGE" \
         start --max-clients 50 --bandwidth 5 --stats-file >/dev/null; then
-        log_success "Container started."
+        log_success "Conduit Started Successfully."
     else
         log_error "Failed to start container."
         exit 1
@@ -156,73 +186,60 @@ run_conduit() {
 
 save_conf() {
     mkdir -p "$INSTALL_DIR"
-    # Create simple config
     echo "MAX_CLIENTS=50" > "$INSTALL_DIR/settings.conf"
     echo "BANDWIDTH=5" >> "$INSTALL_DIR/settings.conf"
     echo "CONTAINER_COUNT=1" >> "$INSTALL_DIR/settings.conf"
 }
 
 create_menu() {
-    log_info "Installing management menu..."
+    log_info "Setting up Management Menu..."
     local menu_path="$INSTALL_DIR/conduit"
     
-    # 1. Try to download official manager
-    # Added '|| true' so script DOES NOT EXIT if curl fails
+    # Try download, fallback to local
     if curl -sL "https://raw.githubusercontent.com/SamNet-dev/conduit-manager/main/conduit.sh" -o "$menu_path" 2>/dev/null; then
         chmod +x "$menu_path"
-        log_success "Downloaded official manager."
     else
-        log_warn "Download failed. Creating local fallback menu."
-        # 2. Create Fallback Menu if download fails
+        log_warn "Menu download failed. Using minimal menu."
         cat > "$menu_path" << 'EOF'
 #!/bin/bash
 echo "--- Conduit Fallback Menu ---"
-echo "1) Status"
-echo "2) Stop"
-echo "3) Start"
-echo "4) Logs"
-read -p "Select: " opt
-case $opt in
-    1) docker ps -f name=conduit ;;
-    2) docker stop conduit ;;
-    3) docker start conduit ;;
-    4) docker logs --tail 50 -f conduit ;;
-    *) echo "Invalid option" ;;
-esac
+echo "1) Check Status: docker ps -f name=conduit"
+echo "2) Restart:      docker restart conduit"
+echo "3) Logs:         docker logs --tail 20 conduit"
 EOF
         chmod +x "$menu_path"
     fi
 
-    # Symlink
     rm -f /usr/local/bin/conduit
     ln -s "$menu_path" /usr/local/bin/conduit
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# MAIN
+# MAIN EXECUTION
 #═══════════════════════════════════════════════════════════════════════
 
 detect_os
-perform_system_update
-check_dependencies
 
+# STEP 1: FIX EVERYTHING
+deep_clean_system
+
+# STEP 2: INSTALL REQUISITES
+install_dependencies
 install_docker
+
+# STEP 3: RUN APP
 check_restore
 run_conduit
 save_conf
 create_menu
 
 echo ""
-log_success "INSTALLATION FINISHED."
+log_success "FRESH INSTALLATION COMPLETE."
 echo "------------------------------------------------"
-echo "Access menu anytime by typing: conduit"
+echo "Opening menu in 3 seconds..."
 echo "------------------------------------------------"
-echo "Launching menu now..."
-sleep 2
+sleep 3
 
-# Force open menu
 if [ -f "/usr/local/bin/conduit" ]; then
     exec /usr/local/bin/conduit menu
-else
-    echo "Menu script missing. Try running: docker ps"
 fi
