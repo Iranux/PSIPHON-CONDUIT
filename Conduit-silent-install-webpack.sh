@@ -1,11 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v4.0 (FIXED STATIC ENGINE)          ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v4.1 (VERSION LABEL FIXED)          ║
 # ║                                                                   ║
-# ║  • NO FLICKER: Uses standard blocking input (Wait for keypress).  ║
-# ║  • SMART FW: Includes Iran-VIP logic without auto-refresh UI.     ║
-# ║  • CLEAN: Reverted to standard menu logic.                        ║
+# ║  • UI: Updated Menu Header to show v4.1 clearly                   ║
+# ║  • NO FLICKER: 100% Static Menu (No auto-refresh)                 ║
+# ║  • SMART FW: Iran VIP + World Throttling                          ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -180,7 +180,7 @@ EOF
 chmod +x "$FW_SCRIPT"
 
 #═══════════════════════════════════════════════════════════════════════
-# 8. STATIC MENU GENERATOR (NO REFRESH LOOP)
+# 8. STATIC MENU GENERATOR (UPDATED HEADER v4.1)
 #═══════════════════════════════════════════════════════════════════════
 cat << 'EOF' > "$MENU_SCRIPT"
 #!/bin/bash
@@ -194,8 +194,9 @@ NC='\033[0m'
 # The menu loop
 while true; do
     clear
+    # --- UPDATED HEADER IS HERE ---
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║           🚀 CONDUIT MANAGER v4.0 (STATIC)                 ║${NC}"
+    echo -e "${CYAN}║      🚀 CONDUIT MANAGER v4.1 (FINAL STATIC)                ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
