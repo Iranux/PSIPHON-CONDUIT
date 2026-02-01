@@ -1,12 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v1.8 (DEEP CLEAN + FRESH INSTALL)   ║
+# ║   🚀 PSIPHON CONDUIT MANAGER (STABLE - NO FLASHING)              ║
 # ║                                                                   ║
-# ║  • Kills stuck apt processes                                      ║
-# ║  • Removes broken lock files                                      ║
-# ║  • Fixes interrupted dpkg installs                                ║
-# ║  • Wipes previous conduit containers for a fresh start            ║
+# ║  • Reverted to stable v1.8 logic (No live monitoring table)       ║
+# ║  • Deep Clean & System Repair enabled                             ║
+# ║  • Standard Menu (No auto-refresh loops)                          ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -28,7 +27,6 @@ export DEBIAN_FRONTEND=noninteractive
 # Exit on critical errors
 set -e
 
-VERSION="1.8"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -38,7 +36,6 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-CYAN='\033[0;36m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
@@ -69,64 +66,44 @@ detect_os() {
 #═══════════════════════════════════════════════════════════════════════
 
 deep_clean_system() {
-    log_warn "Starting Deep Clean & System Repair..."
+    log_warn "Performing System Check & Cleanup..."
 
     # 1. Kill stuck package managers
-    log_info "Killing stuck apt/dpkg processes..."
     killall apt apt-get dpkg 2>/dev/null || true
-    sleep 2
-
+    
     # 2. Fix APT/DPKG specifics
     if [ "$PKG_MANAGER" = "apt" ]; then
-        # Remove lock files if they exist (Risky but necessary for stuck systems)
         rm -f /var/lib/apt/lists/lock 
         rm -f /var/cache/apt/archives/lock
         rm -f /var/lib/dpkg/lock*
 
-        log_info "Repairing dpkg database..."
-        dpkg --configure -a || true
-        
-        log_info "Fixing broken dependencies..."
-        apt-get install -f -y || true
-        
-        log_info "Cleaning apt cache..."
-        apt-get clean || true
-        apt-get autoremove -y || true
-        
-        log_info "Updating package lists..."
-        apt-get update -q -y >/dev/null 2>&1 || true
+        # Repair dpkg
+        dpkg --configure -a >/dev/null 2>&1 || true
+        apt-get install -f -y >/dev/null 2>&1 || true
     fi
 
-    # 3. Wipe previous Conduit Installation
-    log_info "Wiping previous Conduit installation..."
+    # 3. Wipe previous Conduit Installation to ensure clean state
     if command -v docker &>/dev/null; then
-        # Stop and remove all conduit containers
         docker stop conduit 2>/dev/null || true
         docker rm conduit 2>/dev/null || true
-        # Also remove numbered instances just in case
-        docker stop $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
-        docker rm $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
-        
         # Remove old menu link
         rm -f /usr/local/bin/conduit
     fi
-    
-    log_success "System cleaned and ready for fresh install."
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 2. STANDARD INSTALLATION
+# 2. INSTALLATION
 #═══════════════════════════════════════════════════════════════════════
 
 install_dependencies() {
     log_info "Installing dependencies..."
+    # We install these just in case, but they are not critical for the basic menu
     local pkgs="curl gawk tcpdump geoip-bin geoip-database qrencode"
     
-    # Simple install loop
     if [ "$PKG_MANAGER" = "apt" ]; then
-        apt-get install -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $pkgs || true
+        apt-get install -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $pkgs >/dev/null 2>&1 || true
     elif [ "$PKG_MANAGER" = "apk" ]; then
-        apk add --no-cache curl gawk tcpdump geoip qrencode || true
+        apk add --no-cache curl gawk tcpdump geoip qrencode >/dev/null 2>&1 || true
     fi
 }
 
@@ -141,7 +118,7 @@ install_docker() {
         service docker start || true
     else
         if ! curl -fsSL https://get.docker.com | sh >/dev/null 2>&1; then
-             log_warn "Docker script failed, trying fallback..."
+             log_warn "Docker script failed, trying package manager..."
              if [ "$PKG_MANAGER" = "apt" ]; then apt-get install -y docker.io || true; fi
         fi
         systemctl start docker >/dev/null 2>&1 || true
@@ -149,13 +126,12 @@ install_docker() {
     fi
 }
 
-# Keep the identity if we can, otherwise it's a fresh start
 check_restore() {
     [ ! -d "$BACKUP_DIR" ] && return 0
     local backup=$(ls -t "$BACKUP_DIR"/conduit_key_*.json 2>/dev/null | head -1)
     [ -z "$backup" ] && return 0
     
-    log_info "Found previous backup. Restoring Identity..."
+    log_info "Restoring Identity from backup..."
     docker volume create conduit-data >/dev/null 2>&1 || true
     if docker run --rm -v conduit-data:/data -v "$BACKUP_DIR":/bkp alpine sh -c "cp /bkp/$(basename "$backup") /data/conduit_key.json && chown 1000:1000 /data/conduit_key.json"; then
         log_success "Identity restored."
@@ -163,7 +139,7 @@ check_restore() {
 }
 
 run_conduit() {
-    log_info "Starting Conduit (Fresh Container)..."
+    log_info "Starting Conduit (50 Clients / 5 Mbps)..."
     
     # Ensure volume exists and permissions are correct
     docker volume create conduit-data >/dev/null 2>&1 || true
@@ -177,7 +153,7 @@ run_conduit() {
         --network host \
         "$CONDUIT_IMAGE" \
         start --max-clients 50 --bandwidth 5 --stats-file >/dev/null; then
-        log_success "Conduit Started Successfully."
+        log_success "Conduit Started."
     else
         log_error "Failed to start container."
         exit 1
@@ -195,21 +171,35 @@ create_menu() {
     log_info "Setting up Management Menu..."
     local menu_path="$INSTALL_DIR/conduit"
     
-    # Try download, fallback to local
+    # 1. Try to download the OFFICIAL/STANDARD manager from GitHub
+    # This is the original behavior before I customized it
     if curl -sL "https://raw.githubusercontent.com/SamNet-dev/conduit-manager/main/conduit.sh" -o "$menu_path" 2>/dev/null; then
         chmod +x "$menu_path"
+        log_success "Downloaded official manager."
     else
-        log_warn "Menu download failed. Using minimal menu."
+        # 2. FALLBACK: Simple Static Script (NO LOOPS, NO FLICKERING)
+        log_warn "Download failed. Creating basic local menu."
         cat > "$menu_path" << 'EOF'
 #!/bin/bash
-echo "--- Conduit Fallback Menu ---"
-echo "1) Check Status: docker ps -f name=conduit"
-echo "2) Restart:      docker restart conduit"
-echo "3) Logs:         docker logs --tail 20 conduit"
+echo "--- Conduit Basic Menu ---"
+echo "1) Check Status (docker ps)"
+echo "2) Show Logs (docker logs)"
+echo "3) Restart (docker restart)"
+echo "4) Stop (docker stop)"
+echo "Enter your choice:"
+read choice
+case $choice in
+    1) docker ps -f name=conduit ;;
+    2) docker logs --tail 50 conduit ;;
+    3) docker restart conduit ;;
+    4) docker stop conduit ;;
+    *) echo "Invalid option" ;;
+esac
 EOF
         chmod +x "$menu_path"
     fi
 
+    # Symlink for easy access
     rm -f /usr/local/bin/conduit
     ln -s "$menu_path" /usr/local/bin/conduit
 }
@@ -220,25 +210,26 @@ EOF
 
 detect_os
 
-# STEP 1: FIX EVERYTHING
+# 1. Clean & Repair
 deep_clean_system
 
-# STEP 2: INSTALL REQUISITES
+# 2. Install
 install_dependencies
 install_docker
 
-# STEP 3: RUN APP
+# 3. Run
 check_restore
 run_conduit
 save_conf
 create_menu
 
 echo ""
-log_success "FRESH INSTALLATION COMPLETE."
+log_success "INSTALLATION COMPLETE."
 echo "------------------------------------------------"
-echo "Opening menu in 3 seconds..."
+echo "To access the menu, type: conduit"
 echo "------------------------------------------------"
-sleep 3
+echo "Launching menu now..."
+sleep 2
 
 if [ -f "/usr/local/bin/conduit" ]; then
     exec /usr/local/bin/conduit menu
