@@ -34,6 +34,24 @@ The script is engineered to be executed as a **single one-liner**, requiring **z
 
 ---
 
+
+## Installation
+
+### Option 1 – One-Liner (Recommended)
+
+```bash
+curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/conduit_auto.sh | sudo bash -s -- --auto
+```
+
+### Option 2 – Download & Run Locally
+```bash
+curl -fsSL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/conduit_auto.sh -o conduit_auto.sh
+chmod +x conduit_auto.sh
+sudo bash conduit_auto.sh --auto
+```
+
+
+
 ## Features Overview
 
 ### 1. Pre-Installation Automation
@@ -143,12 +161,7 @@ User
  │
  └─ Interactive Management Menu
 --------------------------------------------------
-## Installation
 
-### Option 1 – One-Liner (Recommended)
-
-```bash
-curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/conduit_auto.sh | sudo bash
 
 
 
