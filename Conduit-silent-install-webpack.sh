@@ -1,12 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v3.0 (FINAL STABLE ENGINE)          ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v3.1 (PERFECT STATIC + SMART FW)    ║
 # ║                                                                   ║
-# ║  • ABSOLUTELY NO FLICKER: Menu waits indefinitely for input.      ║
-# ║  • SMART FIREWALL: Iran VIP (Unlimited) + World Throttled.        ║
-# ║  • AUTO-START: Systemd service forced enabled.                    ║
-# ║  • DEEP REPAIR: Fixes dpkg locks before starting.                 ║
+# ║  • BASE: Based on the "No-Flicker" Static Version (v2.2)          ║
+# ║  • ADDED: Smart Firewall (Iran VIP + World Throttling)            ║
+# ║  • FEATURE: Auto-Start + Deep Repair included                     ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -19,7 +18,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 set -e
 
-# --- 2. CONFIGURATION ---
+# --- 2. VARIABLES ---
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="/opt/conduit"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -35,9 +34,9 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
-# 3. SYSTEM PREPARATION (DEEP CLEAN)
+# 3. DEEP CLEAN & REPAIR (برای رفع خطاهای قبلی سرور شما)
 #═══════════════════════════════════════════════════════════════════════
-echo -e "${BLUE}[INFO] Performing Deep System Repair...${NC}"
+echo -e "${BLUE}[INFO] Performing System Repair...${NC}"
 
 # Kill stuck processes
 killall apt apt-get dpkg 2>/dev/null || true
@@ -47,11 +46,10 @@ rm -f /var/lib/apt/lists/lock
 rm -f /var/cache/apt/archives/lock
 rm -f /var/lib/dpkg/lock*
 
-# Detect OS & Install Dependencies
+# Install Dependencies (ipset added for firewall)
 if [ -f /etc/debian_version ]; then
     dpkg --configure -a >/dev/null 2>&1 || true
     apt-get update -q -y >/dev/null 2>&1 || true
-    # Install dependencies (Force yes)
     apt-get install -y -q curl gawk tcpdump geoip-bin geoip-database qrencode ipset >/dev/null 2>&1 || true
 elif [ -f /etc/alpine-release ]; then
     apk add --no-cache curl gawk tcpdump geoip qrencode ipset >/dev/null 2>&1 || true
@@ -87,7 +85,7 @@ if [ -d "$BACKUP_DIR" ]; then
 fi
 
 #═══════════════════════════════════════════════════════════════════════
-# 5. START CONDUIT (50 Clients / 5 Mbps)
+# 5. START CONDUIT (50 Users / 5 Mbps)
 #═══════════════════════════════════════════════════════════════════════
 echo -e "${BLUE}[INFO] Starting Service...${NC}"
 docker volume create conduit-data >/dev/null 2>&1 || true
@@ -107,9 +105,8 @@ echo "MAX_CLIENTS=50" > "$INSTALL_DIR/settings.conf"
 echo "BANDWIDTH=5" >> "$INSTALL_DIR/settings.conf"
 
 #═══════════════════════════════════════════════════════════════════════
-# 6. SETUP AUTO-START (SYSTEMD)
+# 6. AUTO-START (Systemd)
 #═══════════════════════════════════════════════════════════════════════
-echo -e "${BLUE}[INFO] Enabling Auto-Start...${NC}"
 cat > /etc/systemd/system/conduit.service << EOF
 [Unit]
 Description=Psiphon Conduit Service
@@ -133,7 +130,7 @@ if command -v systemctl &>/dev/null; then
 fi
 
 #═══════════════════════════════════════════════════════════════════════
-# 7. GENERATE FIREWALL SCRIPT (SMART LOGIC)
+# 7. FIREWALL SCRIPT (The Smart Logic)
 #═══════════════════════════════════════════════════════════════════════
 cat << 'EOF' > "$FW_SCRIPT"
 #!/bin/bash
@@ -152,14 +149,16 @@ do_enable() {
     while read line; do [[ "$line" =~ ^# ]] || ipset add $IPSET "$line" -exist; done < /tmp/ir.cidr
     
     iptables -F INPUT
+    # 1. Allow Essential
     iptables -A INPUT -i lo -j ACCEPT
     iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
     
-    # 1. Allow Iran (Unlimited)
+    # 2. Allow Iran (VIP - Unlimited)
     iptables -A INPUT -m set --match-set $IPSET src -j ACCEPT
     
-    # 2. Smart Throttle Others (3 connections / 60s)
+    # 3. Smart Throttle Others (Allows Trackers, Blocks Abusers)
+    #    Max 3 connections per minute per IP for non-Iranians
     iptables -A INPUT -m state --state NEW -m recent --set
     iptables -A INPUT -m state --state NEW -m recent --update --seconds 60 --hitcount 3 -j DROP
     iptables -A INPUT -j ACCEPT
@@ -170,7 +169,7 @@ do_enable() {
 do_disable() {
     iptables -P INPUT ACCEPT
     iptables -F INPUT
-    echo -e "${GREEN}FIREWALL DISABLED (All Allowed).${NC}"
+    echo -e "${GREEN}FIREWALL DISABLED.${NC}"
 }
 
 case "$1" in
@@ -181,7 +180,7 @@ EOF
 chmod +x "$FW_SCRIPT"
 
 #═══════════════════════════════════════════════════════════════════════
-# 8. GENERATE STATIC MENU (NO FLICKER)
+# 8. THE STATIC MENU (No Flickering!)
 #═══════════════════════════════════════════════════════════════════════
 cat << 'EOF' > "$MENU_SCRIPT"
 #!/bin/bash
@@ -192,26 +191,24 @@ RED='\033[1;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Static loop: Only refreshes when user acts
 while true; do
     clear
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║           🚀 CONDUIT MANAGER v3.0 (STABLE)                 ║${NC}"
+    echo -e "${CYAN}║         🚀 CONDUIT MANAGER v3.1 (STATIC MENU)              ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
-    # 1. Check Service
+    # Status Checks (Run once per menu load)
     if docker ps | grep -q conduit; then
         echo -e "  SERVICE:  ${GREEN}RUNNING${NC}"
     else
         echo -e "  SERVICE:  ${RED}STOPPED${NC}"
     fi
 
-    # 2. Check Firewall
     if iptables -L INPUT 2>/dev/null | grep -q "match-set iran_ips"; then
-        echo -e "  FILTER:   ${GREEN}SMART (Iran Unlimited / World Throttled)${NC}"
+        echo -e "  FILTER:   ${GREEN}SMART (Iran VIP + World Throttled)${NC}"
     else
-        echo -e "  FILTER:   ${YELLOW}OPEN (No Restrictions)${NC}"
+        echo -e "  FILTER:   ${YELLOW}OPEN (Default)${NC}"
     fi
 
     echo ""
@@ -220,13 +217,13 @@ while true; do
     echo "  [3] 🔄 Restart Service"
     echo "  [4] 🛑 Stop Service"
     echo "  -----------------------"
-    echo "  [5] 🧠 Enable Smart Filter"
+    echo "  [5] 🧠 Enable Smart Filter (Recommended)"
     echo "  [6] 🔓 Disable Filter"
     echo "  -----------------------"
     echo "  [0] 🚪 Exit"
     echo ""
     
-    # BLOCKING READ - NO TIMEOUT - NO FLICKER
+    # This is the key: A blocking read wait (NO TIMEOUT)
     read -p "  Select option: " choice
     
     case $choice in
