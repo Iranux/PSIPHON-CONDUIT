@@ -1,11 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v2.1 (CLEAN STATIC EDITION)         ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v2.2 (STABLE NO-TABLE EDITION)      ║
 # ║                                                                   ║
-# ║  • FIXED: Removed flickering table from main menu                 ║
-# ║  • STABLE: Main menu is now static (no auto-refresh)              ║
-# ║  • FEATURE: Added dedicated "Live Monitor" submenu using 'watch'  ║
+# ║  • REMOVED: Auto-refreshing table (No more flickering)            ║
+# ║  • FIXED: Main menu is completely static                          ║
+# ║  • FEATURE: Manual user check option added                        ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -24,7 +24,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 set -e
 
-VERSION="2.1"
+VERSION="2.2"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -64,7 +64,7 @@ detect_os() {
 #═══════════════════════════════════════════════════════════════════════
 
 deep_clean_system() {
-    log_warn "Performing System Check & Cleanup..."
+    log_warn "Performing System Check..."
     killall apt apt-get dpkg 2>/dev/null || true
     if [ "$PKG_MANAGER" = "apt" ]; then
         rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock*
@@ -134,50 +134,15 @@ save_conf() {
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# CLEAN DASHBOARD SCRIPT
+# STATIC MENU SCRIPT (NO FLICKER)
 #═══════════════════════════════════════════════════════════════════════
 
 create_custom_menu() {
-    log_info "Installing Clean Dashboard..."
+    log_info "Installing Static Menu..."
     local menu_path="$INSTALL_DIR/conduit"
-    local stats_helper="$INSTALL_DIR/stats_helper.sh"
     
-    # 1. Create a helper script for 'watch' to use (Stats logic)
-    cat << 'EOF' > "$stats_helper"
-#!/bin/bash
-CYAN='\033[1;36m'
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-echo -e "${CYAN}--- LIVE USER MONITOR (Updates every 2s) ---${NC}"
-printf "%-20s %-10s %-20s\n" "IP ADDRESS" "COUNT" "COUNTRY"
-echo "----------------------------------------------------"
-
-connections=$(ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr)
-total=$(echo "$connections" | grep -c . || true)
-
-if [ -z "$connections" ]; then
-    echo -e "${YELLOW}No active users yet.${NC}"
-else
-    echo "$connections" | head -n 15 | while read count ip; do
-        [ -z "$ip" ] && continue
-        country=$(geoiplookup "$ip" 2>/dev/null | awk -F: '{print $2}' | sed 's/^ //')
-        [ -z "$country" ] && country="Unknown"
-        printf "%-20s ${GREEN}%-10s${NC} %-20s\n" "$ip" "$count" "${country:0:20}"
-    done
-fi
-echo "----------------------------------------------------"
-echo -e "TOTAL USERS: ${GREEN}$total${NC}"
-EOF
-    chmod +x "$stats_helper"
-
-    # 2. Create the Main Menu (Static)
     cat << 'EOF' > "$menu_path"
 #!/bin/bash
-
-# Define paths
-STATS_SCRIPT="/opt/conduit/stats_helper.sh"
 
 # ANSI Colors
 CYAN='\033[1;36m'
@@ -186,10 +151,34 @@ YELLOW='\033[1;33m'
 RED='\033[1;31m'
 NC='\033[0m'
 
+show_users_snapshot() {
+    echo -e "\n${CYAN}--- ACTIVE USERS SNAPSHOT ---${NC}"
+    printf "%-20s %-10s %-20s\n" "IP ADDRESS" "COUNT" "COUNTRY"
+    echo "----------------------------------------------------"
+    
+    connections=$(ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr)
+    total=$(echo "$connections" | grep -c . || true)
+
+    if [ -z "$connections" ]; then
+        echo -e "${YELLOW}No active users found at this moment.${NC}"
+    else
+        echo "$connections" | head -n 15 | while read count ip; do
+            [ -z "$ip" ] && continue
+            country=$(geoiplookup "$ip" 2>/dev/null | awk -F: '{print $2}' | sed 's/^ //')
+            [ -z "$country" ] && country="Unknown"
+            printf "%-20s ${GREEN}%-10s${NC} %-20s\n" "$ip" "$count" "${country:0:20}"
+        done
+        echo "----------------------------------------------------"
+        echo -e "TOTAL USERS: ${GREEN}$total${NC}"
+    fi
+    echo ""
+    read -p "Press Enter to return to menu..."
+}
+
 while true; do
     clear
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║             🚀 CONDUIT MANAGER (Static Menu)               ║${NC}"
+    echo -e "${CYAN}║             🚀 CONDUIT MANAGER (v2.2 Stable)               ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
@@ -201,8 +190,8 @@ while true; do
     fi
     
     echo ""
-    echo "  [1] 🌍 Live Monitor (Show Users)"
-    echo "  [2] 📄 View Logs"
+    echo "  [1] 👥 Show Active Users (One-time check)"
+    echo "  [2] 📄 View Container Logs"
     echo "  [3] 🔄 Restart Service"
     echo "  [4] 🛑 Stop Service"
     echo "  [0] 🚪 Exit"
@@ -211,15 +200,7 @@ while true; do
     
     case $choice in
         1)
-            # Use 'watch' for flicker-free updates
-            if command -v watch >/dev/null; then
-                watch -c -n 2 "$STATS_SCRIPT"
-            else
-                # Fallback if watch is missing
-                bash "$STATS_SCRIPT"
-                echo ""
-                read -p "Press Enter to return..."
-            fi
+            show_users_snapshot
             ;;
         2) 
             echo -e "\n${CYAN}--- LOGS (Press CTRL+C to exit) ---${NC}"
@@ -247,7 +228,7 @@ EOF
     chmod +x "$menu_path"
     rm -f /usr/local/bin/conduit
     ln -s "$menu_path" /usr/local/bin/conduit
-    log_success "Clean Dashboard Installed."
+    log_success "Static Menu Installed."
 }
 
 #═══════════════════════════════════════════════════════════════════════
@@ -266,7 +247,7 @@ create_custom_menu
 echo ""
 log_success "INSTALLATION COMPLETE."
 echo "------------------------------------------------"
-echo "Starting Dashboard..."
+echo "Starting Menu in 2 seconds..."
 echo "------------------------------------------------"
 sleep 2
 
