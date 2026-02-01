@@ -1,12 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v1.8 (DEEP CLEAN + FRESH INSTALL)   ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v1.9 (ULTIMATE DASHBOARD)           ║
 # ║                                                                   ║
-# ║  • Kills stuck apt processes                                      ║
-# ║  • Removes broken lock files                                      ║
-# ║  • Fixes interrupted dpkg installs                                ║
-# ║  • Wipes previous conduit containers for a fresh start            ║
+# ║  • Features: Auto-Repair, Deep Clean, Custom English Dashboard    ║
+# ║  • Settings: 50 Clients / 5 Mbps / 1 Container                    ║
+# ║  • Monitor:  Live GeoIP Table integrated into the menu            ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -28,7 +27,7 @@ export DEBIAN_FRONTEND=noninteractive
 # Exit on critical errors
 set -e
 
-VERSION="1.8"
+VERSION="1.9"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -65,64 +64,48 @@ detect_os() {
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 1. DEEP CLEAN & REPAIR SYSTEM
+# 1. DEEP CLEAN & REPAIR SYSTEM (From v1.8)
 #═══════════════════════════════════════════════════════════════════════
 
 deep_clean_system() {
     log_warn "Starting Deep Clean & System Repair..."
 
     # 1. Kill stuck package managers
-    log_info "Killing stuck apt/dpkg processes..."
     killall apt apt-get dpkg 2>/dev/null || true
-    sleep 2
-
+    
     # 2. Fix APT/DPKG specifics
     if [ "$PKG_MANAGER" = "apt" ]; then
-        # Remove lock files if they exist (Risky but necessary for stuck systems)
         rm -f /var/lib/apt/lists/lock 
         rm -f /var/cache/apt/archives/lock
         rm -f /var/lib/dpkg/lock*
 
         log_info "Repairing dpkg database..."
         dpkg --configure -a || true
-        
-        log_info "Fixing broken dependencies..."
         apt-get install -f -y || true
-        
-        log_info "Cleaning apt cache..."
         apt-get clean || true
-        apt-get autoremove -y || true
-        
-        log_info "Updating package lists..."
         apt-get update -q -y >/dev/null 2>&1 || true
     fi
 
     # 3. Wipe previous Conduit Installation
     log_info "Wiping previous Conduit installation..."
     if command -v docker &>/dev/null; then
-        # Stop and remove all conduit containers
         docker stop conduit 2>/dev/null || true
         docker rm conduit 2>/dev/null || true
-        # Also remove numbered instances just in case
-        docker stop $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
-        docker rm $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
-        
         # Remove old menu link
         rm -f /usr/local/bin/conduit
     fi
     
-    log_success "System cleaned and ready for fresh install."
+    log_success "System cleaned."
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 2. STANDARD INSTALLATION
+# 2. INSTALLATION
 #═══════════════════════════════════════════════════════════════════════
 
 install_dependencies() {
     log_info "Installing dependencies..."
     local pkgs="curl gawk tcpdump geoip-bin geoip-database qrencode"
     
-    # Simple install loop
     if [ "$PKG_MANAGER" = "apt" ]; then
         apt-get install -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $pkgs || true
     elif [ "$PKG_MANAGER" = "apk" ]; then
@@ -149,13 +132,12 @@ install_docker() {
     fi
 }
 
-# Keep the identity if we can, otherwise it's a fresh start
 check_restore() {
     [ ! -d "$BACKUP_DIR" ] && return 0
     local backup=$(ls -t "$BACKUP_DIR"/conduit_key_*.json 2>/dev/null | head -1)
     [ -z "$backup" ] && return 0
     
-    log_info "Found previous backup. Restoring Identity..."
+    log_info "Found backup. Restoring Identity..."
     docker volume create conduit-data >/dev/null 2>&1 || true
     if docker run --rm -v conduit-data:/data -v "$BACKUP_DIR":/bkp alpine sh -c "cp /bkp/$(basename "$backup") /data/conduit_key.json && chown 1000:1000 /data/conduit_key.json"; then
         log_success "Identity restored."
@@ -163,9 +145,7 @@ check_restore() {
 }
 
 run_conduit() {
-    log_info "Starting Conduit (Fresh Container)..."
-    
-    # Ensure volume exists and permissions are correct
+    log_info "Starting Conduit (50 Clients / 5 Mbps)..."
     docker volume create conduit-data >/dev/null 2>&1 || true
     docker run --rm -v conduit-data:/data alpine chown -R 1000:1000 /data >/dev/null 2>&1 || true
 
@@ -177,7 +157,7 @@ run_conduit() {
         --network host \
         "$CONDUIT_IMAGE" \
         start --max-clients 50 --bandwidth 5 --stats-file >/dev/null; then
-        log_success "Conduit Started Successfully."
+        log_success "Conduit Started."
     else
         log_error "Failed to start container."
         exit 1
@@ -191,27 +171,116 @@ save_conf() {
     echo "CONTAINER_COUNT=1" >> "$INSTALL_DIR/settings.conf"
 }
 
-create_menu() {
-    log_info "Setting up Management Menu..."
+#═══════════════════════════════════════════════════════════════════════
+# 3. CREATE CUSTOM DASHBOARD (English)
+#═══════════════════════════════════════════════════════════════════════
+
+create_custom_menu() {
+    log_info "Generating Custom Dashboard with Live Monitor..."
     local menu_path="$INSTALL_DIR/conduit"
     
-    # Try download, fallback to local
-    if curl -sL "https://raw.githubusercontent.com/SamNet-dev/conduit-manager/main/conduit.sh" -o "$menu_path" 2>/dev/null; then
-        chmod +x "$menu_path"
-    else
-        log_warn "Menu download failed. Using minimal menu."
-        cat > "$menu_path" << 'EOF'
+    # We write the entire menu script here
+    cat << 'EOF' > "$menu_path"
 #!/bin/bash
-echo "--- Conduit Fallback Menu ---"
-echo "1) Check Status: docker ps -f name=conduit"
-echo "2) Restart:      docker restart conduit"
-echo "3) Logs:         docker logs --tail 20 conduit"
-EOF
-        chmod +x "$menu_path"
-    fi
 
+# --- Custom Conduit Manager ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+show_monitor() {
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║              🌍 LIVE USER MONITORING                       ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    
+    # Get connections (exclude localhost)
+    # Using 'ss' to find established connections not on 127.0.0.1
+    connections=$(ss -tun state established | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr)
+    total_users=$(echo "$connections" | grep -c . || true)
+    
+    if [ -z "$connections" ]; then
+        echo -e "\n${YELLOW}  [!] No active users connected yet.${NC}"
+        echo -e "  --------------------------------------------------"
+        echo -e "  ${YELLOW}NOTE:${NC} It may take 15-60 minutes for Psiphon Network"
+        echo -e "        to discover this server and route traffic here."
+        echo -e "        Please be patient."
+        echo -e "  --------------------------------------------------"
+    else
+        printf "\n  %-20s %-10s %-20s\n" "IP ADDRESS" "COUNT" "COUNTRY"
+        echo "  --------------------------------------------------------"
+        
+        # Process top 10 IPs to fit on screen
+        echo "$connections" | head -n 10 | while read count ip; do
+            [ -z "$ip" ] && continue
+            
+            # GeoIP Lookup
+            country=$(geoiplookup "$ip" 2>/dev/null | awk -F: '{print $2}' | sed 's/^ //')
+            if [[ "$country" == *"can't resolve"* ]] || [[ -z "$country" ]]; then
+                country="Unknown"
+            fi
+            
+            printf "  %-20s ${GREEN}%-10s${NC} %-20s\n" "$ip" "$count" "$country"
+        done
+        
+        if [ "$total_users" -gt 10 ]; then
+             echo "  ... (and $((total_users - 10)) more)"
+        fi
+        
+        echo "  --------------------------------------------------------"
+        echo -e "  TOTAL UNIQUE USERS: ${GREEN}$total_users${NC}"
+    fi
+    echo -e "\n  Last Update: $(date '+%H:%M:%S')"
+}
+
+main_menu() {
+    while true; do
+        clear
+        show_monitor
+        
+        echo ""
+        echo -e "${CYAN}--- MAIN MENU -----------------------------------${NC}"
+        echo "  1) Refresh Monitor (Enter)"
+        echo "  2) Show Container Logs"
+        echo "  3) Restart Conduit"
+        echo "  4) Stop Conduit"
+        echo "  0) Exit"
+        echo ""
+        
+        # Read with timeout for auto-refresh
+        read -t 10 -p "  Select option: " choice || true
+        
+        case $choice in
+            1|"") continue ;;
+            2) 
+                echo -e "\n${YELLOW}Press CTRL+C to stop logs...${NC}"
+                sleep 1
+                docker logs -f --tail 100 conduit
+                ;;
+            3)
+                echo "Restarting..."
+                docker restart conduit
+                sleep 2
+                ;;
+            4)
+                echo "Stopping..."
+                docker stop conduit
+                ;;
+            0) exit 0 ;;
+            *) ;;
+        esac
+    done
+}
+
+# Run
+main_menu
+EOF
+
+    chmod +x "$menu_path"
     rm -f /usr/local/bin/conduit
     ln -s "$menu_path" /usr/local/bin/conduit
+    log_success "Custom Dashboard Installed."
 }
 
 #═══════════════════════════════════════════════════════════════════════
@@ -219,27 +288,21 @@ EOF
 #═══════════════════════════════════════════════════════════════════════
 
 detect_os
-
-# STEP 1: FIX EVERYTHING
 deep_clean_system
-
-# STEP 2: INSTALL REQUISITES
 install_dependencies
 install_docker
-
-# STEP 3: RUN APP
 check_restore
 run_conduit
 save_conf
-create_menu
+create_custom_menu
 
 echo ""
-log_success "FRESH INSTALLATION COMPLETE."
+log_success "INSTALLATION COMPLETE."
 echo "------------------------------------------------"
-echo "Opening menu in 3 seconds..."
+echo "Launching Dashboard in 3 seconds..."
 echo "------------------------------------------------"
 sleep 3
 
 if [ -f "/usr/local/bin/conduit" ]; then
-    exec /usr/local/bin/conduit menu
+    exec /usr/local/bin/conduit
 fi
