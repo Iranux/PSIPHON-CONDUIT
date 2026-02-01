@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║      🚀 PSIPHON CONDUIT MANAGER v1.2                             ║
+# ║      🚀 PSIPHON CONDUIT MANAGER v2.0 Iranux Version                             ║
 # ║                                                                   ║
 # ║  One-click setup for Psiphon Conduit                              ║
 # ║                                                                   ║
@@ -14,7 +14,7 @@
 # ╚═══════════════════════════════════════════════════════════════════╝
 # core engine: https://github.com/Psiphon-Labs/psiphon-tunnel-core
 # Usage:
-# curl -sL https://raw.githubusercontent.com/SamNet-dev/conduit-manager/main/conduit.sh | sudo bash
+# curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/conduit_auto.sh | sudo bash
 #
 # Reference: https://github.com/ssmirr/conduit/releases/latest
 # Conduit CLI options:
@@ -31,7 +31,7 @@ if [ -z "$BASH_VERSION" ]; then
     exit 1
 fi
 
-VERSION="1.2"
+VERSION="2.0"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
 BACKUP_DIR="$INSTALL_DIR/backups"
