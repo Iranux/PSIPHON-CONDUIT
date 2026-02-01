@@ -1,96 +1,106 @@
 #!/bin/bash
 
 # =================================================================
-# Project: IRANUX PSIPHON CONDUIT (Master Deployment Script)
+# Project: IRANUX PSIPHON CONDUIT (Local Build Edition)
 # Target OS: Ubuntu 24.04
-# Features: Smart Guard (12h Grace), Nuclear Clean, Auto-Root
+# Logic: Downloads binary directly from GitHub to avoid Docker Denied errors.
 # =================================================================
 
 set -eo pipefail
 
-# --- Configuration Constants ---
+# --- Configuration ---
 MAX_CLIENTS=50
 BANDWIDTH=10
 INSTALL_DIR="/var/lib/conduit"
 INSTALL_DATE_FILE="$INSTALL_DIR/install_date"
 IRAN_IP_LIST="/etc/conduit/iran_ips.txt"
 SMART_GUARD_CONF="/etc/conduit/smart_guard.status"
-REPO_RAW_URL="https://raw.githubusercontent.com/Iranux/PSIPHON-CONDUIT/main/Install.sh"
+# URL for the official/reliable binary
+BINARY_URL="https://github.com/Psiphon-Inc/psiphon-conduit/releases/latest/download/psiphon-conduit-linux-x86_64.zip"
 
-# --- 1. Root Elevation ---
+# --- 1. Root Check ---
 if [ "$EUID" -ne 0 ]; then
     exec sudo bash "$0" "$@"
 fi
 
-# --- 2. Environment & Directory Preparation ---
-# CRITICAL: Creating directories BEFORE anything else.
+# --- 2. Environment Preparation ---
+# Creating directories FIRST to prevent path errors.
 prepare_env() {
-    echo "[*] Initializing system directories..."
+    echo "[*] Creating system directories..."
     mkdir -p "$INSTALL_DIR"
     mkdir -p "/etc/conduit"
+    mkdir -p "/tmp/conduit_build"
     
-    echo "[*] Installing core dependencies (Ubuntu 24.04)..."
+    echo "[*] Installing dependencies (Docker, Ipset, Unzip)..."
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y && apt-get install -y curl docker.io ipset iptables jq
+    apt-get update -y && apt-get install -y curl docker.io ipset iptables jq unzip wget
     systemctl enable --now docker
 }
 
 # --- 3. Nuclear Clean ---
 clean_old_stuff() {
-    echo "[*] Wiping old instances and services..."
+    echo "[*] Cleaning up old instances..."
     docker stop conduit 2>/dev/null || true
     docker rm -f conduit 2>/dev/null || true
     systemctl stop conduit-guard 2>/dev/null || true
-    systemctl disable conduit-guard 2>/dev/null || true
     rm -f /etc/systemd/system/conduit-guard.service
 }
 
-# --- 4. Smart Guard (Geo-IP) Setup ---
+# --- 4. Smart Guard Setup ---
 setup_guard() {
     if [ ! -f "$INSTALL_DATE_FILE" ]; then
         date +%s > "$INSTALL_DATE_FILE"
     fi
-    echo "[*] Downloading Iran IP CIDR database..."
+    echo "[*] Fetching Iran IP database..."
     curl -s -H "Cache-Control: no-cache" https://www.ip2location.com/free/visitor-blocker -d "countryCode=IR&format=cidr" > "$IRAN_IP_LIST" || echo "1.0.0.0/8" > "$IRAN_IP_LIST"
     echo "enabled" > "$SMART_GUARD_CONF"
 }
 
-# --- 5. Firewall Application Engine ---
+# --- 5. Firewall Engine ---
 apply_rules() {
     [ ! -f "$INSTALL_DATE_FILE" ] && return
     local start_t=$(cat "$INSTALL_DATE_FILE")
     local diff=$(( ($(date +%s) - start_t) / 3600 ))
 
     if [ "$diff" -ge 12 ]; then
-        echo "[!] Grace period expired. Enabling 5-minute limit for non-Iran IPs."
+        echo "[!] Grace period over. Enforcing 5-min session limit for foreigners."
         ipset destroy iran_ips 2>/dev/null || true
         ipset create iran_ips hash:net
         while read -r ip; do [[ -n "$ip" ]] && ipset add iran_ips "$ip" -!; done < "$IRAN_IP_LIST"
 
-        # Cleanup existing rules to prevent duplication
-        iptables -D INPUT -p tcp --dport 1080 -j ACCEPT 2>/dev/null || true
         iptables -F INPUT 2>/dev/null || true
-        
-        # Apply strict rules
         iptables -A INPUT -p tcp --dport 1080 -m set --match-set iran_ips src -j ACCEPT
         iptables -A INPUT -p tcp --dport 1080 -m recent --name non_iran --set
         iptables -A INPUT -p tcp --dport 1080 -m recent --name non_iran --update --seconds 300 -j DROP
     fi
 }
 
-# --- 6. Core Deployment (Using Valid Public Image) ---
+# --- 6. Core Deployment (Local Binary Method) ---
+# This mimics the "Original Code" behavior to avoid Docker Registry Denied errors.
 deploy() {
-    echo "[*] Pulling and deploying stable Conduit container..."
-    # Fallback logic for image selection
-    local IMAGE="lofat/conduit:latest"
-    docker pull $IMAGE
-    
+    echo "[*] Downloading Conduit binary from GitHub..."
+    cd /tmp/conduit_build
+    wget -qO conduit.zip "$BINARY_URL"
+    unzip -o conduit.zip && rm conduit.zip
+    mv psiphon-conduit-linux-x86_64 conduit
+    chmod +x conduit
+
+    echo "[*] Building local Docker image (No Pull Required)..."
+    cat <<EOF > Dockerfile
+FROM ubuntu:24.04
+COPY conduit /usr/local/bin/conduit
+RUN chmod +x /usr/local/bin/conduit
+ENTRYPOINT ["/usr/local/bin/conduit"]
+EOF
+    docker build -t conduit-local .
+
+    echo "[*] Starting Container..."
     docker run -d --name conduit --restart always --network host \
-        -v /root/conduit_backup:/data $IMAGE \
+        -v /root/conduit_backup:/data conduit-local \
         --max-clients $MAX_CLIENTS --bandwidth $BANDWIDTH
 }
 
-# --- 7. Management CLI & Persistence ---
+# --- 7. Management CLI (Flicker-Free) ---
 finalize() {
     cat <<'EOF' > /usr/local/bin/conduit
 #!/bin/bash
@@ -101,7 +111,7 @@ while true; do
     echo "======================================"
     echo "1) View Live Stats (Smooth Refresh)"
     echo "2) Restart Node"
-    echo "3) Smart Guard Info"
+    echo "3) Smart Guard Status"
     echo "4) Exit"
     echo "======================================"
     read -p "Select option: " opt
@@ -120,14 +130,14 @@ done
 EOF
     chmod +x /usr/local/bin/conduit
 
-    # Setup Persistence for Reboot
+    # Persistence Service
     cat <<EOF > /etc/systemd/system/conduit-guard.service
 [Unit]
-Description=Conduit Smart Guard Persistence
+Description=Conduit Guard
 After=network.target docker.service
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c "source <(curl -sL -H 'Cache-Control: no-cache' $REPO_RAW_URL) --apply-rules"
+ExecStart=/bin/bash -c "source <(curl -sL -H 'Cache-Control: no-cache' https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/Ubuntu24-iranux.sh) --apply-rules"
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
@@ -135,19 +145,16 @@ EOF
     systemctl daemon-reload && systemctl enable conduit-guard.service
 }
 
-# --- Main Flow ---
+# --- Execution ---
 if [[ "$1" == "--apply-rules" ]]; then
     apply_rules
 else
-    echo "🚀 Initializing Iranux Psiphon Conduit..."
+    echo "🚀 Installing Iranux Psiphon Conduit (Local Build)..."
     prepare_env
     clean_old_stuff
     setup_guard
     deploy
     apply_rules
     finalize
-    echo "------------------------------------------------"
-    echo "✅ INSTALLATION SUCCESSFUL!"
-    echo "Type 'conduit' to see the management menu."
-    echo "------------------------------------------------"
+    echo "✅ Installation Success! Type 'conduit' to manage."
 fi
