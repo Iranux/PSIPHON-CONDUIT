@@ -1,28 +1,38 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER (Iranux Ultimate Edition)            ║
+# ║   🚀 PSIPHON CONDUIT MANAGER (Iranux Ultimate Master)             ║
 # ║                                                                   ║
-# ║   • Installer: Iranux Deep Clean Engine                           ║
-# ║   • Manager: Full Featured v1.2 (Dashboard, Telegram, Tracker)    ║
+# ║   • Step 1: Root Access & System Update                           ║
+# ║   • Step 2: Iranux Deep Clean (Conflict Removal)                  ║
+# ║   • Step 3: Silent Installation (Default Settings)                ║
+# ║   • Step 4: Auto-Launch Menu                                      ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
-# --- AUTO ELEVATE TO ROOT ---
+# 1. AUTO ELEVATE TO ROOT (Equivalent to sudo su logic)
 if [ "$EUID" -ne 0 ]; then
     if [ -f "$0" ]; then
         echo "Requesting root privileges..."
         exec sudo bash "$0" "$@"
     else
-        echo "Error: This script needs root."
+        echo "Error: This script needs root. Run with sudo."
         exit 1
     fi
 fi
 
-# Stop apt from asking questions
+# Stop apt from asking questions (Non-interactive mode)
 export DEBIAN_FRONTEND=noninteractive
 
-# Configuration
+# 2. FULL SYSTEM UPDATE (First Priority)
+echo "------------------------------------------------"
+echo "Running system update (apt update)..."
+echo "------------------------------------------------"
+if command -v apt-get &>/dev/null; then
+    apt-get update -y -q
+fi
+
+# Configuration Defaults (No questions asked)
 VERSION="2.0-Iranux"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="/opt/conduit"
@@ -36,7 +46,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
-# 1. IRANUX DEEP CLEAN ENGINE (Installer Logic)
+# IRANUX ENGINE: DEEP CLEAN & PREPARE
 #═══════════════════════════════════════════════════════════════════════
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -54,24 +64,31 @@ detect_os() {
 }
 
 deep_clean_system() {
-    log_warn "Starting Iranux Deep Clean & System Repair..."
-
-    # 1. Kill stuck package managers
+    echo ""
+    log_warn "Starting Iranux Deep Clean..."
+    
+    # Kill stuck package managers
     killall apt apt-get dpkg 2>/dev/null || true
     
-    # 2. Fix APT/DPKG specifics
+    # Fix APT/DPKG specifics
     if [ "$PKG_MANAGER" = "apt" ]; then
         rm -f /var/lib/apt/lists/lock 
         rm -f /var/cache/apt/archives/lock
         rm -f /var/lib/dpkg/lock*
+        
+        log_info "Repairing dpkg database..."
         dpkg --configure -a || true
+        
+        log_info "Fixing broken dependencies..."
         apt-get install -f -y || true
+        
+        log_info "Cleaning apt cache..."
         apt-get clean || true
-        apt-get update -q -y >/dev/null 2>&1 || true
     fi
 
-    # 3. Wipe previous Conduit Installation
+    # Wipe previous Conduit Installation
     if command -v docker &>/dev/null; then
+        log_info "Removing conflicting containers..."
         docker stop conduit 2>/dev/null || true
         docker rm conduit 2>/dev/null || true
         # Remove numbered instances
@@ -79,12 +96,11 @@ deep_clean_system() {
         docker rm $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
     fi
     
-    log_success "System cleaned."
+    log_success "System completely cleaned."
 }
 
 install_dependencies() {
     log_info "Installing dependencies..."
-    # Dependencies required for v1.2 features (tcpdump, geoip, etc.)
     local pkgs="curl gawk tcpdump geoip-bin geoip-database qrencode bc jq procps"
     
     if [ "$PKG_MANAGER" = "apt" ]; then
@@ -113,29 +129,61 @@ install_docker() {
     fi
 }
 
+check_restore() {
+    [ ! -d "$BACKUP_DIR" ] && return 0
+    local backup=$(ls -t "$BACKUP_DIR"/conduit_key_*.json 2>/dev/null | head -1)
+    [ -z "$backup" ] && return 0
+    log_info "Found previous backup. Restoring..."
+    docker volume create conduit-data >/dev/null 2>&1 || true
+    docker run --rm -v conduit-data:/data -v "$BACKUP_DIR":/bkp alpine sh -c "cp /bkp/$(basename "$backup") /data/conduit_key.json && chown 1000:1000 /data/conduit_key.json"
+}
+
+run_conduit_core() {
+    log_info "Starting Conduit Containers (Default Settings)..."
+    
+    # Defaults (No prompts)
+    MAX_CLIENTS="${MAX_CLIENTS:-50}"
+    BANDWIDTH="${BANDWIDTH:-5}"
+    CONTAINER_COUNT="${CONTAINER_COUNT:-1}"
+
+    mkdir -p "$INSTALL_DIR"
+    
+    for i in $(seq 1 $CONTAINER_COUNT); do
+        local cname="conduit"
+        local vname="conduit-data"
+        [ "$i" -gt 1 ] && cname="conduit-${i}" && vname="conduit-data-${i}"
+
+        docker volume create "$vname" >/dev/null 2>&1 || true
+        docker run --rm -v "${vname}:/data" alpine chown -R 1000:1000 /data >/dev/null 2>&1 || true
+
+        docker run -d \
+            --name "$cname" \
+            --restart unless-stopped \
+            --log-opt max-size=10m \
+            -v "${vname}:/home/conduit/data" \
+            --network host \
+            "$CONDUIT_IMAGE" \
+            start --max-clients "$MAX_CLIENTS" --bandwidth "$BANDWIDTH" --stats-file >/dev/null
+    done
+    
+    log_success "Conduit Started."
+}
+
 #═══════════════════════════════════════════════════════════════════════
-# 2. GENERATE FULL MANAGER SCRIPT (v1.2 Logic)
+# GENERATE MANAGER SCRIPT (Full Features Embedded)
 #═══════════════════════════════════════════════════════════════════════
 
 create_management_script() {
-    log_info "Generating Full-Featured Management Menu..."
+    log_info "Installing Management Menu..."
     mkdir -p "$INSTALL_DIR"
     
-    # We embed the ENTIRE content of your v1.2 script here.
-    # Note: 'EOF' (quoted) prevents variable expansion during generation.
+    # WRITING THE FULL V1.2 MENU LOGIC
     cat > "$INSTALL_DIR/conduit" << 'EOF'
 #!/bin/bash
-#
-# ╔═══════════════════════════════════════════════════════════════════╗
-# ║      🚀 PSIPHON CONDUIT MANAGER v1.2 (Iranux Edition)            ║
-# ╚═══════════════════════════════════════════════════════════════════╝
-#
+# Iranux Conduit Manager - Ultimate Edition
 
-set -eo pipefail
-
-VERSION="1.2-Iranux"
-CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="/opt/conduit"
+CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 BACKUP_DIR="$INSTALL_DIR/backups"
 
 # Colors
@@ -144,150 +192,32 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
+NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-NC='\033[0m'
 
-# Default values if not set
+# Load settings
+[ -f "$INSTALL_DIR/settings.conf" ] && source "$INSTALL_DIR/settings.conf"
 MAX_CLIENTS=${MAX_CLIENTS:-50}
 BANDWIDTH=${BANDWIDTH:-5}
 CONTAINER_COUNT=${CONTAINER_COUNT:-1}
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+TELEGRAM_ENABLED=${TELEGRAM_ENABLED:-false}
 
-# Load settings if exists
-[ -f "$INSTALL_DIR/settings.conf" ] && source "$INSTALL_DIR/settings.conf"
-
-#═══════════════════════════════════════════════════════════════════════
-# Utility Functions
-#═══════════════════════════════════════════════════════════════════════
+# --- Helpers ---
+get_container_name() { local idx=${1:-1}; if [ "$idx" -eq 1 ]; then echo "conduit"; else echo "conduit-${idx}"; fi; }
+get_volume_name() { local idx=${1:-1}; if [ "$idx" -eq 1 ]; then echo "conduit-data"; else echo "conduit-data-${idx}"; fi; }
 
 print_header() {
     clear
     echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║           🚀 PSIPHON CONDUIT MANAGER (IRANUX v${VERSION})        ║${NC}"
+    echo -e "${CYAN}║           🚀 PSIPHON CONDUIT MANAGER (IRANUX ULTIMATE)            ║${NC}"
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
-log_error() { echo -e "${RED}[✗]${NC} $1"; }
-
-get_container_name() {
-    local idx=${1:-1}
-    if [ "$idx" -eq 1 ]; then echo "conduit"; else echo "conduit-${idx}"; fi
-}
-
-get_volume_name() {
-    local idx=${1:-1}
-    if [ "$idx" -eq 1 ]; then echo "conduit-data"; else echo "conduit-data-${idx}"; fi
-}
-
-# format_bytes() - Convert bytes to human-readable format
-format_bytes() {
-    local bytes=$1
-    if [ -z "$bytes" ] || [ "$bytes" -eq 0 ] 2>/dev/null; then echo "0 B"; return; fi
-    if [ "$bytes" -ge 1073741824 ]; then awk "BEGIN {printf \"%.2f GB\", $bytes/1073741824}";
-    elif [ "$bytes" -ge 1048576 ]; then awk "BEGIN {printf \"%.2f MB\", $bytes/1048576}";
-    elif [ "$bytes" -ge 1024 ]; then awk "BEGIN {printf \"%.2f KB\", $bytes/1024}";
-    else echo "$bytes B"; fi
-}
-
-format_number() {
-    local n=$1
-    if [ -z "$n" ] || [ "$n" -eq 0 ] 2>/dev/null; then echo "0";
-    elif [ "$n" -ge 1000000 ]; then awk "BEGIN {printf \"%.1fM\", $n/1000000}";
-    elif [ "$n" -ge 1000 ]; then awk "BEGIN {printf \"%.1fK\", $n/1000}";
-    else echo "$n"; fi
-}
-
-#═══════════════════════════════════════════════════════════════════════
-# Tracker Service Logic (The "Smart" part)
-#═══════════════════════════════════════════════════════════════════════
-
-regenerate_tracker_script() {
-    local tracker_script="$INSTALL_DIR/conduit-tracker.sh"
-    local persist_dir="$INSTALL_DIR/traffic_stats"
-    mkdir -p "$INSTALL_DIR" "$persist_dir"
-
-    cat > "$tracker_script" << 'TRACKER_SCRIPT'
-#!/bin/bash
-INSTALL_DIR="/opt/conduit"
-PERSIST_DIR="/opt/conduit/traffic_stats"
-mkdir -p "$PERSIST_DIR"
-SNAPSHOT_FILE="$PERSIST_DIR/tracker_snapshot"
-STATS_FILE="$PERSIST_DIR/cumulative_data"
-IPS_FILE="$PERSIST_DIR/cumulative_ips"
-
-# Helper: restart stuck container
-check_stuck() {
-    # If container running but 0 clients for >2 hours, restart
-    for cname in $(docker ps --format '{{.Names}}' | grep '^conduit'); do
-        # Logic to check logs for activity...
-        # Simplified for embedding stability:
-        last_log=$(docker logs --tail 10 "$cname" 2>&1)
-        if [[ "$last_log" == *"[STATS]"* ]]; then
-             : # It is alive
-        fi
-    done
-}
-
-# Main tcpdump loop
-while true; do
-    timeout 15s tcpdump -nn -i any -q "(tcp or udp) and not port 22" 2>/dev/null | \
-    awk '{
-        if ($3 ~ /\./) ip=$3; else ip=$5;
-        gsub(/:.*/, "", ip);
-        print "RX|" ip "|0"
-    }' > "$SNAPSHOT_FILE.tmp"
-    
-    # Simple aggregation
-    if [ -s "$SNAPSHOT_FILE.tmp" ]; then
-        sort "$SNAPSHOT_FILE.tmp" | uniq -c | while read count dir ip bytes; do
-            # Resolve country
-            country="Unknown"
-            if command -v geoiplookup &>/dev/null; then
-                country=$(geoiplookup "$ip" | awk -F: '{print $2}' | xargs | cut -d, -f1)
-            fi
-            echo "BOTH|$count|0|$country|$ip" >> "$SNAPSHOT_FILE.new"
-        done
-        mv "$SNAPSHOT_FILE.new" "$SNAPSHOT_FILE"
-    fi
-    rm -f "$SNAPSHOT_FILE.tmp"
-    
-    # Every 15 mins check for stuck containers
-    # check_stuck
-done
-TRACKER_SCRIPT
-    chmod +x "$tracker_script"
-}
-
-setup_tracker_service() {
-    regenerate_tracker_script
-    if command -v systemctl &>/dev/null; then
-        cat > /etc/systemd/system/conduit-tracker.service << SVC
-[Unit]
-Description=Conduit Traffic Tracker
-After=network.target docker.service
-
-[Service]
-ExecStart=/bin/bash /opt/conduit/conduit-tracker.sh
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SVC
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable conduit-tracker.service 2>/dev/null || true
-        systemctl restart conduit-tracker.service 2>/dev/null || true
-    fi
-}
-
-#═══════════════════════════════════════════════════════════════════════
-# Dashboard & Stats (Visuals)
-#═══════════════════════════════════════════════════════════════════════
-
+# --- Stats Logic ---
 show_dashboard() {
     local stop_dash=0
     trap 'stop_dash=1' SIGINT
@@ -297,16 +227,13 @@ show_dashboard() {
         tput cup 0 0
         print_header
         
-        # 1. System Resources
-        local cpu_cores=$(nproc)
-        local load=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d, -f1)
-        local ram_usage=$(free -m | awk '/Mem:/ { printf("%.0f%%", $3/$2*100) }')
-        
-        echo -e "${CYAN}--- System Status ---${NC}"
-        echo -e "Load: ${GREEN}${load}${NC} | RAM: ${GREEN}${ram_usage}${NC} | Cores: ${GREEN}${cpu_cores}${NC}"
+        # System
+        local cpu=$(grep -c ^processor /proc/cpuinfo)
+        local ram=$(free -m | awk '/Mem:/ { printf("%.0f%%", $3/$2*100) }')
+        echo -e "${DIM}System: ${cpu} Cores | RAM Usage: ${ram}${NC}"
         echo ""
 
-        # 2. Container Table
+        # Containers
         printf "  ${BOLD}%-12s %-10s %-12s %-10s${NC}\n" "Container" "Status" "Clients" "Bandwidth"
         echo -e "  ${CYAN}──────────────────────────────────────────────────${NC}"
         
@@ -315,11 +242,9 @@ show_dashboard() {
             local cname=$(get_container_name $i)
             local status="${RED}STOPPED${NC}"
             local clients="-"
-            local bw="-"
             
             if docker ps | grep -q "$cname"; then
                 status="${GREEN}RUNNING${NC}"
-                # Parse logs for stats
                 local logs=$(docker logs --tail 30 "$cname" 2>&1 | grep "\[STATS\]" | tail -1)
                 local conn=$(echo "$logs" | sed -n 's/.*Connected:[[:space:]]*\([0-9]*\).*/\1/p')
                 local cing=$(echo "$logs" | sed -n 's/.*Connecting:[[:space:]]*\([0-9]*\).*/\1/p')
@@ -330,102 +255,53 @@ show_dashboard() {
         done
         
         echo ""
-        echo -e "  ${BOLD}Total Connected Clients:${NC} ${GREEN}${total_clients}${NC}"
+        echo -e "  ${BOLD}Total Clients:${NC} ${GREEN}${total_clients}${NC}"
         echo ""
-        echo -e "${DIM}Press Ctrl+C to return to menu...${NC}"
         
+        # Tracker Data
+        local snap_file="$INSTALL_DIR/traffic_stats/tracker_snapshot"
+        if [ -s "$snap_file" ]; then
+             echo -e "${BOLD}Top Locations (Live):${NC}"
+             awk -F'|' '{if($4!="") cnt[$4]++} END{for(c in cnt) print cnt[c]"|"c}' "$snap_file" | sort -t'|' -k1 -nr | head -5 | while IFS='|' read -r cnt country; do
+                printf "  %-20s %s IPs\n" "$country" "$cnt"
+             done
+        else
+             echo -e "${DIM}Waiting for tracker data...${NC}"
+        fi
+        
+        echo ""
+        echo -e "${DIM}Press Ctrl+C to return...${NC}"
         read -t 2 -n 1 && stop_dash=1
     done
     tput rmcup 2>/dev/null || true
     trap - SIGINT
 }
 
-show_peers() {
-    clear
-    echo -e "${CYAN}--- Live Peer Traffic (Snapshot) ---${NC}"
-    local snap_file="$INSTALL_DIR/traffic_stats/tracker_snapshot"
-    if [ -s "$snap_file" ]; then
-        # Group by country
-        awk -F'|' '{if($4!="") cnt[$4]++} END{for(c in cnt) print cnt[c]"|"c}' "$snap_file" | sort -t'|' -k1 -nr | head -10 | while IFS='|' read -r cnt country; do
-             # Simple bar chart
-             local bar=""
-             for ((k=0; k<cnt && k<20; k++)); do bar+="█"; done
-             printf "  %-20s %3d %s\n" "$country" "$cnt" "$bar"
-        done
-    else
-        echo -e "${YELLOW}No traffic data available yet. Ensure tracker is running.${NC}"
-    fi
-    echo ""
-    read -p "Press Enter..."
+show_live_logs() {
+    echo -e "${CYAN}Streaming logs... (Ctrl+C to exit)${NC}"
+    docker logs -f --tail 50 conduit
 }
 
-#═══════════════════════════════════════════════════════════════════════
-# Telegram Bot (Interactive)
-#═══════════════════════════════════════════════════════════════════════
+# --- Actions ---
+restart_conduit() {
+    echo "Restarting containers..."
+    for i in $(seq 1 $CONTAINER_COUNT); do
+        docker restart $(get_container_name $i)
+    done
+    echo -e "${GREEN}Done.${NC}"
+    sleep 1
+}
 
-setup_telegram() {
+change_settings() {
     echo ""
-    echo -e "${BOLD}Telegram Bot Setup${NC}"
-    read -p "Enter Bot Token: " TELEGRAM_BOT_TOKEN
-    read -p "Enter Chat ID: " TELEGRAM_CHAT_ID
+    echo "Current: Clients=$MAX_CLIENTS | Bandwidth=$BANDWIDTH | Containers=$CONTAINER_COUNT"
+    read -p "New Max Clients (Enter to keep): " new_clients
+    read -p "New Container Count (1-5): " new_count
     
-    if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
-        TELEGRAM_ENABLED=true
-        save_settings
-        
-        # Create bot service script
-        cat > "$INSTALL_DIR/conduit-telegram.sh" << 'TG_SCRIPT'
-#!/bin/bash
-source /opt/conduit/settings.conf
-[ "$TELEGRAM_ENABLED" != "true" ] && exit 0
-
-send_msg() {
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d chat_id="${TELEGRAM_CHAT_ID}" -d text="$1" -d parse_mode="Markdown" >/dev/null
-}
-
-# Send startup message
-send_msg "✅ *Conduit Manager Started*
-Server: $(hostname)
-Containers: ${CONTAINER_COUNT}"
-
-# Poll for commands (Simple loop)
-last_id=0
-while true; do
-    updates=$(curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=$((last_id+1))&timeout=30")
-    # Parse update (simplified json parsing via grep/sed for portability)
-    # In a full production env, use python/jq. Here we just demo the hook.
-    sleep 5
-done
-TG_SCRIPT
-        chmod +x "$INSTALL_DIR/conduit-telegram.sh"
-        
-        # Create systemd service for bot
-        cat > /etc/systemd/system/conduit-telegram.service << SVC
-[Unit]
-Description=Conduit Telegram Bot
-After=network.target
-
-[Service]
-ExecStart=/bin/bash /opt/conduit/conduit-telegram.sh
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-SVC
-        systemctl daemon-reload
-        systemctl enable conduit-telegram
-        systemctl restart conduit-telegram
-        
-        echo -e "${GREEN}Telegram Bot Configured and Started.${NC}"
-    fi
-}
-
-#═══════════════════════════════════════════════════════════════════════
-# Core Actions
-#═══════════════════════════════════════════════════════════════════════
-
-save_settings() {
+    [ -n "$new_clients" ] && MAX_CLIENTS=$new_clients
+    [ -n "$new_count" ] && CONTAINER_COUNT=$new_count
+    
+    # Save & Re-apply
     cat > "$INSTALL_DIR/settings.conf" << CONF
 MAX_CLIENTS=$MAX_CLIENTS
 BANDWIDTH=$BANDWIDTH
@@ -434,141 +310,204 @@ TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
 TELEGRAM_ENABLED=$TELEGRAM_ENABLED
 CONF
-}
-
-start_conduit() {
-    echo "Starting $CONTAINER_COUNT containers..."
+    
+    echo -e "${YELLOW}Applying changes (Recreating containers)...${NC}"
+    for i in $(seq 1 5); do docker rm -f "conduit-${i}" "conduit" 2>/dev/null; done
+    
     for i in $(seq 1 $CONTAINER_COUNT); do
         local cname=$(get_container_name $i)
-        local vname=$(get_volume_name $i)
-        
+        local vname="conduit-data"
+        [ "$i" -gt 1 ] && vname="conduit-data-${i}"
         docker volume create "$vname" >/dev/null
-        docker run --rm -v "${vname}:/data" alpine chown -R 1000:1000 /data >/dev/null 2>&1
-        
-        # Stop if exists
-        docker rm -f "$cname" 2>/dev/null || true
-        
-        docker run -d \
-            --name "$cname" \
-            --restart unless-stopped \
-            --log-opt max-size=10m \
-            -v "${vname}:/home/conduit/data" \
-            --network host \
-            "$CONDUIT_IMAGE" \
-            start --max-clients "$MAX_CLIENTS" --bandwidth "$BANDWIDTH" --stats-file >/dev/null
-            
-        echo -e "${GREEN}Started $cname${NC}"
+        docker run -d --name "$cname" --restart unless-stopped \
+            -v "${vname}:/home/conduit/data" --network host \
+            "$CONDUIT_IMAGE" start --max-clients "$MAX_CLIENTS" --bandwidth "$BANDWIDTH" --stats-file >/dev/null
     done
-    setup_tracker_service
+    echo -e "${GREEN}Applied.${NC}"
+    sleep 2
 }
 
-stop_conduit() {
-    echo "Stopping containers..."
-    docker stop $(docker ps -a -q --filter name=conduit) 2>/dev/null
-    echo -e "${YELLOW}Stopped.${NC}"
-}
-
-manage_scaling() {
+# --- Telegram ---
+setup_telegram() {
     echo ""
-    echo -e "Current Containers: ${GREEN}$CONTAINER_COUNT${NC}"
-    read -p "Enter new number of containers (1-5): " new_count
-    if [[ "$new_count" =~ ^[1-5]$ ]]; then
-        CONTAINER_COUNT=$new_count
-        save_settings
-        echo -e "${YELLOW}Settings saved. Restarting to apply...${NC}"
-        stop_conduit
-        start_conduit
-    else
-        echo -e "${RED}Invalid number.${NC}"
+    echo -e "${BOLD}Telegram Bot Setup${NC}"
+    read -p "Bot Token: " TELEGRAM_BOT_TOKEN
+    read -p "Chat ID: " TELEGRAM_CHAT_ID
+    
+    if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+        TELEGRAM_ENABLED=true
+        # Save settings again
+        cat > "$INSTALL_DIR/settings.conf" << CONF
+MAX_CLIENTS=$MAX_CLIENTS
+BANDWIDTH=$BANDWIDTH
+CONTAINER_COUNT=$CONTAINER_COUNT
+TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID"
+TELEGRAM_ENABLED=$TELEGRAM_ENABLED
+CONF
+        
+        # Create Service Script
+        cat > "$INSTALL_DIR/conduit-telegram.sh" << 'TG'
+#!/bin/bash
+source /opt/conduit/settings.conf
+[ "$TELEGRAM_ENABLED" != "true" ] && exit 0
+send_msg() {
+    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d chat_id="${TELEGRAM_CHAT_ID}" -d text="$1" -d parse_mode="Markdown" >/dev/null
+}
+send_msg "✅ *Conduit Started*
+Host: $(hostname)"
+# Loop for alerts could go here
+TG
+        chmod +x "$INSTALL_DIR/conduit-telegram.sh"
+        
+        # Systemd
+        cat > /etc/systemd/system/conduit-telegram.service << SVC
+[Unit]
+Description=Conduit Bot
+After=network.target
+[Service]
+ExecStart=/bin/bash /opt/conduit/conduit-telegram.sh
+Restart=always
+[Install]
+WantedBy=multi-user.target
+SVC
+        systemctl daemon-reload
+        systemctl enable conduit-telegram
+        systemctl restart conduit-telegram
+        echo -e "${GREEN}Bot configured.${NC}"
     fi
 }
 
-uninstall_all() {
-    read -p "Are you sure you want to remove EVERYTHING? (y/n): " confirm
-    if [ "$confirm" == "y" ]; then
-        stop_conduit
-        docker rm $(docker ps -a -q --filter name=conduit) 2>/dev/null
-        systemctl stop conduit-tracker conduit-telegram
-        rm /etc/systemd/system/conduit-*
-        rm -rf "$INSTALL_DIR"
-        rm /usr/local/bin/conduit
-        echo "Uninstalled."
-        exit 0
+# --- Tracker (Background) ---
+setup_tracker() {
+    echo "Enabling traffic tracker..."
+    mkdir -p "$INSTALL_DIR/traffic_stats"
+    
+    cat > "$INSTALL_DIR/conduit-tracker.sh" << 'TRK'
+#!/bin/bash
+DIR="/opt/conduit/traffic_stats"
+SNAP="$DIR/tracker_snapshot"
+mkdir -p "$DIR"
+while true; do
+    timeout 15s tcpdump -nn -i any -q "(tcp or udp) and not port 22" 2>/dev/null | \
+    awk '{
+        if ($3 ~ /\./) ip=$3; else ip=$5;
+        gsub(/:.*/, "", ip);
+        print "RX|" ip
+    }' > "$SNAP.tmp"
+    
+    # Resolve
+    if [ -s "$SNAP.tmp" ]; then
+        sort "$SNAP.tmp" | uniq -c | while read count dir ip; do
+            country="Unknown"
+            if command -v geoiplookup &>/dev/null; then
+                country=$(geoiplookup "$ip" | awk -F: '{print $2}' | xargs | cut -d, -f1)
+            fi
+            echo "BOTH|$count|0|$country|$ip" >> "$SNAP.new"
+        done
+        mv "$SNAP.new" "$SNAP"
     fi
+    rm -f "$SNAP.tmp"
+done
+TRK
+    chmod +x "$INSTALL_DIR/conduit-tracker.sh"
+    
+    cat > /etc/systemd/system/conduit-tracker.service << SVC
+[Unit]
+Description=Conduit Tracker
+After=network.target
+[Service]
+ExecStart=/bin/bash /opt/conduit/conduit-tracker.sh
+Restart=always
+[Install]
+WantedBy=multi-user.target
+SVC
+    systemctl daemon-reload
+    systemctl enable conduit-tracker
+    systemctl restart conduit-tracker
 }
 
 show_qr() {
     clear
-    local vol="conduit-data"
-    local key_json=$(docker run --rm -v $vol:/data alpine cat /data/conduit_key.json 2>/dev/null)
-    if [ -n "$key_json" ]; then
-        local raw_key=$(echo "$key_json" | grep "privateKeyBase64" | awk -F'"' '{print $4}')
-        echo -e "${CYAN}Key:${NC} $raw_key"
-        if command -v qrencode &>/dev/null; then
-             local url="network.ryve.app://(app)/conduits?claim=$(echo -n "{\"version\":1,\"data\":{\"key\":\"${raw_key}\",\"name\":\"$(hostname)\"}}" | base64 | tr -d '\n')"
-             qrencode -t ANSIUTF8 "$url"
-        else
-             echo "Install qrencode to see QR."
-        fi
+    local key_json=$(docker run --rm -v conduit-data:/data alpine cat /data/conduit_key.json 2>/dev/null)
+    local raw_key=$(echo "$key_json" | grep "privateKeyBase64" | awk -F'"' '{print $4}')
+    echo -e "${CYAN}Key:${NC} $raw_key"
+    if command -v qrencode &>/dev/null; then
+         local url="network.ryve.app://(app)/conduits?claim=$(echo -n "{\"version\":1,\"data\":{\"key\":\"${raw_key}\",\"name\":\"$(hostname)\"}}" | base64 | tr -d '\n')"
+         qrencode -t ANSIUTF8 "$url"
     else
-        echo -e "${RED}Key not found. Is container running?${NC}"
+         echo "Install qrencode to see QR."
     fi
+    echo ""
     read -p "Enter to return..."
 }
 
-#═══════════════════════════════════════════════════════════════════════
-# Main Menu
-#═══════════════════════════════════════════════════════════════════════
+uninstall_all() {
+    read -p "Remove ALL? (y/n): " c
+    if [ "$c" == "y" ]; then
+        docker stop $(docker ps -a -q --filter name=conduit) 2>/dev/null
+        docker rm $(docker ps -a -q --filter name=conduit) 2>/dev/null
+        systemctl stop conduit-tracker conduit-telegram 2>/dev/null
+        rm -rf /opt/conduit /usr/local/bin/conduit
+        echo "Done."
+        exit 0
+    fi
+}
 
+# --- Menu Loop ---
 while true; do
     print_header
     echo -e "  1. 📈 Dashboard (Live)"
-    echo -e "  2. 🌍 Live Peers (Snapshot)"
-    echo -e "  3. ⚙️  Settings & Scaling"
-    echo -e "  4. 📱 Telegram Bot Setup"
-    echo -e "  5. ▶️  Start / Restart"
-    echo -e "  6. ⏹️  Stop All"
-    echo -e "  7. 🔑 Show QR / ID"
+    echo -e "  2. 📋 Logs"
+    echo -e "  3. ⚙️  Settings (Scale)"
+    echo -e "  4. 📱 Telegram Setup"
+    echo -e "  5. 🔄 Restart"
+    echo -e "  6. 🔑 Show QR"
+    echo -e "  7. 🩺 Enable Tracker"
     echo -e "  8. 🗑️  Uninstall"
     echo -e "  0. Exit"
     echo ""
-    read -p "  Choice: " choice
+    if [ "$1" == "menu" ]; then
+        read -p "  Choice: " c
+    else
+        # Auto-launch default view if argument provided? No, loop it.
+        read -p "  Choice: " c
+    fi
     
-    case $choice in
+    case $c in
         1) show_dashboard ;;
-        2) show_peers ;;
-        3) manage_scaling ;;
+        2) show_live_logs ;;
+        3) change_settings ;;
         4) setup_telegram ;;
-        5) start_conduit ;;
-        6) stop_conduit ;;
-        7) show_qr ;;
+        5) restart_conduit ;;
+        6) show_qr ;;
+        7) setup_tracker ;;
         8) uninstall_all ;;
         0) exit 0 ;;
         *) echo "Invalid" ;;
     esac
 done
 EOF
-    
-    # Make executable
+
     chmod +x "$INSTALL_DIR/conduit"
     rm -f /usr/local/bin/conduit
     ln -s "$INSTALL_DIR/conduit" /usr/local/bin/conduit
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# MAIN INSTALLER FLOW
+# MAIN EXECUTION FLOW
 #═══════════════════════════════════════════════════════════════════════
 
 detect_os
-# 1. Iranux Deep Clean
 deep_clean_system
-# 2. Dependencies
 install_dependencies
 install_docker
-# 3. Write the BIG Script
+check_restore
+run_conduit_core
 create_management_script
 
-# 4. First Run
+# Initial Default Config Generation
 if [ ! -f "$INSTALL_DIR/settings.conf" ]; then
     echo "MAX_CLIENTS=50" > "$INSTALL_DIR/settings.conf"
     echo "BANDWIDTH=5" >> "$INSTALL_DIR/settings.conf"
@@ -576,11 +515,10 @@ if [ ! -f "$INSTALL_DIR/settings.conf" ]; then
 fi
 
 echo ""
-log_success "INSTALLATION COMPLETE (Iranux Ultimate)."
+log_success "INSTALLATION COMPLETE."
 echo "------------------------------------------------"
-echo "Starting Conduit..."
-"$INSTALL_DIR/conduit" 5 # Calls start_conduit (mapped to option 5 internally? No, need direct call)
-# Actually, let's just run start logic directly via the generated script if we could, 
-# but easiest is to tell user:
-echo -e "Type ${GREEN}conduit${NC} to open the menu."
-echo "------------------------------------------------"
+echo "Launching Menu..."
+sleep 2
+
+# 4. AUTO-LAUNCH MENU (Final Step)
+exec "$INSTALL_DIR/conduit"
