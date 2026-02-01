@@ -1,16 +1,16 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER (Iranux Ultimate Master)             ║
+# ║   🚀 PSIPHON CONDUIT MANAGER (Iranux Ultimate Master v2.1)        ║
 # ║                                                                   ║
 # ║   • Step 1: Root Access & System Update                           ║
 # ║   • Step 2: Iranux Deep Clean (Conflict Removal)                  ║
 # ║   • Step 3: Silent Installation (Default Settings)                ║
-# ║   • Step 4: Auto-Launch Menu                                      ║
+# ║   • Step 4: Auto-Launch Menu (Root Enforced)                      ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
-# 1. AUTO ELEVATE TO ROOT (Equivalent to sudo su logic)
+# 1. AUTO ELEVATE TO ROOT (For the Installer itself)
 if [ "$EUID" -ne 0 ]; then
     if [ -f "$0" ]; then
         echo "Requesting root privileges..."
@@ -33,7 +33,7 @@ if command -v apt-get &>/dev/null; then
 fi
 
 # Configuration Defaults (No questions asked)
-VERSION="2.0-Iranux"
+VERSION="2.1-Iranux"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="/opt/conduit"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -170,7 +170,7 @@ run_conduit_core() {
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# GENERATE MANAGER SCRIPT (Full Features Embedded)
+# GENERATE MANAGER SCRIPT (Full Features Embedded + AUTO ROOT FIX)
 #═══════════════════════════════════════════════════════════════════════
 
 create_management_script() {
@@ -178,9 +178,16 @@ create_management_script() {
     mkdir -p "$INSTALL_DIR"
     
     # WRITING THE FULL V1.2 MENU LOGIC
+    # FIXED: Added Auto-Elevate inside the generated script
     cat > "$INSTALL_DIR/conduit" << 'EOF'
 #!/bin/bash
 # Iranux Conduit Manager - Ultimate Edition
+
+# --- AUTO ELEVATE TO ROOT (Fixes "Permission Denied" on Docker) ---
+if [ "$EUID" -ne 0 ]; then
+   exec sudo bash "$0" "$@"
+   exit 0
+fi
 
 INSTALL_DIR="/opt/conduit"
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
@@ -250,6 +257,11 @@ show_dashboard() {
                 local cing=$(echo "$logs" | sed -n 's/.*Connecting:[[:space:]]*\([0-9]*\).*/\1/p')
                 clients="${conn:-0} (${cing:-0})"
                 total_clients=$((total_clients + ${conn:-0}))
+            else
+                # Try to see if it's permission issue or actually stopped
+                if ! docker ps >/dev/null 2>&1; then
+                    status="${RED}DOCKER ERROR${NC}"
+                fi
             fi
             printf "  %-12s %-19b %-12s %-10s\n" "$cname" "$status" "$clients" "Unlimited"
         done
@@ -471,7 +483,6 @@ while true; do
     if [ "$1" == "menu" ]; then
         read -p "  Choice: " c
     else
-        # Auto-launch default view if argument provided? No, loop it.
         read -p "  Choice: " c
     fi
     
@@ -499,6 +510,7 @@ EOF
 # MAIN EXECUTION FLOW
 #═══════════════════════════════════════════════════════════════════════
 
+# 1. Installer Logic (Requires Root)
 detect_os
 deep_clean_system
 install_dependencies
@@ -520,5 +532,5 @@ echo "------------------------------------------------"
 echo "Launching Menu..."
 sleep 2
 
-# 4. AUTO-LAUNCH MENU (Final Step)
+# 2. Auto-Launch Menu (Already Root)
 exec "$INSTALL_DIR/conduit"
