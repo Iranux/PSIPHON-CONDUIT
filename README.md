@@ -28,12 +28,7 @@ A robust, self-healing installer for Psiphon Conduit servers. Optimized for stab
 Run the following command as root:
 
 ```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/Iranux/PSIPHON-CONDUIT/main/install.sh](https://raw.githubusercontent.com/Iranux/PSIPHON-CONDUIT/main/install.sh))
-
-## Quick Install
-
-```bash
-curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/Conduit-silent-install-webpack.sh | sudo bash
+curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/install.sh | sudo bash
 ```
 
 Or download and run manually:
