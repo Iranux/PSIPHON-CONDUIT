@@ -1,11 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER (STABLE - NO FLASHING)              ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v2.3 (AUTO-START ENABLED)           ║
 # ║                                                                   ║
-# ║  • Reverted to stable v1.8 logic (No live monitoring table)       ║
-# ║  • Deep Clean & System Repair enabled                             ║
-# ║  • Standard Menu (No auto-refresh loops)                          ║
+# ║  • FIXED: Systemd Auto-Start is now forced ON                     ║
+# ║  • FIXED: "conduit" command is registered globally                ║
+# ║  • SETTINGS: 50 Clients / 5 Mbps / 1 Container                    ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -62,32 +62,33 @@ detect_os() {
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# 1. DEEP CLEAN & REPAIR SYSTEM
+# 1. DEEP CLEAN & REPAIR
 #═══════════════════════════════════════════════════════════════════════
 
 deep_clean_system() {
     log_warn "Performing System Check & Cleanup..."
 
-    # 1. Kill stuck package managers
+    # Kill stuck processes
     killall apt apt-get dpkg 2>/dev/null || true
     
-    # 2. Fix APT/DPKG specifics
+    # Fix APT/DPKG
     if [ "$PKG_MANAGER" = "apt" ]; then
         rm -f /var/lib/apt/lists/lock 
         rm -f /var/cache/apt/archives/lock
         rm -f /var/lib/dpkg/lock*
-
-        # Repair dpkg
         dpkg --configure -a >/dev/null 2>&1 || true
         apt-get install -f -y >/dev/null 2>&1 || true
     fi
 
-    # 3. Wipe previous Conduit Installation to ensure clean state
+    # Wipe previous installation for a clean start
     if command -v docker &>/dev/null; then
         docker stop conduit 2>/dev/null || true
         docker rm conduit 2>/dev/null || true
         # Remove old menu link
         rm -f /usr/local/bin/conduit
+        # Remove old service
+        systemctl disable conduit 2>/dev/null || true
+        rm -f /etc/systemd/system/conduit.service
     fi
 }
 
@@ -97,7 +98,6 @@ deep_clean_system() {
 
 install_dependencies() {
     log_info "Installing dependencies..."
-    # We install these just in case, but they are not critical for the basic menu
     local pkgs="curl gawk tcpdump geoip-bin geoip-database qrencode"
     
     if [ "$PKG_MANAGER" = "apt" ]; then
@@ -141,10 +141,11 @@ check_restore() {
 run_conduit() {
     log_info "Starting Conduit (50 Clients / 5 Mbps)..."
     
-    # Ensure volume exists and permissions are correct
+    # Ensure volume exists
     docker volume create conduit-data >/dev/null 2>&1 || true
     docker run --rm -v conduit-data:/data alpine chown -R 1000:1000 /data >/dev/null 2>&1 || true
 
+    # Run with restart policy
     if docker run -d \
         --name conduit \
         --restart unless-stopped \
@@ -167,39 +168,64 @@ save_conf() {
     echo "CONTAINER_COUNT=1" >> "$INSTALL_DIR/settings.conf"
 }
 
+# --- FORCE ENABLE AUTO START ---
+setup_autostart() {
+    log_info "Configuring Auto-Start Service..."
+    
+    # Create systemd service
+    cat > /etc/systemd/system/conduit.service << EOF
+[Unit]
+Description=Psiphon Conduit Service
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker start conduit
+ExecStop=/usr/bin/docker stop conduit
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Enable it
+    if command -v systemctl &>/dev/null; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable conduit.service 2>/dev/null || true
+        systemctl start conduit.service 2>/dev/null || true
+        log_success "Auto-start enabled (Systemd)."
+    else
+        log_warn "Systemd not found. Relying on Docker restart policy."
+    fi
+}
+
 create_menu() {
     log_info "Setting up Management Menu..."
     local menu_path="$INSTALL_DIR/conduit"
     
-    # 1. Try to download the OFFICIAL/STANDARD manager from GitHub
-    # This is the original behavior before I customized it
+    # Download official manager
     if curl -sL "https://raw.githubusercontent.com/SamNet-dev/conduit-manager/main/conduit.sh" -o "$menu_path" 2>/dev/null; then
         chmod +x "$menu_path"
         log_success "Downloaded official manager."
     else
-        # 2. FALLBACK: Simple Static Script (NO LOOPS, NO FLICKERING)
-        log_warn "Download failed. Creating basic local menu."
+        # Fallback
         cat > "$menu_path" << 'EOF'
 #!/bin/bash
 echo "--- Conduit Basic Menu ---"
 echo "1) Check Status (docker ps)"
 echo "2) Show Logs (docker logs)"
-echo "3) Restart (docker restart)"
-echo "4) Stop (docker stop)"
 echo "Enter your choice:"
 read choice
 case $choice in
     1) docker ps -f name=conduit ;;
     2) docker logs --tail 50 conduit ;;
-    3) docker restart conduit ;;
-    4) docker stop conduit ;;
-    *) echo "Invalid option" ;;
 esac
 EOF
         chmod +x "$menu_path"
     fi
 
-    # Symlink for easy access
+    # Symlink
     rm -f /usr/local/bin/conduit
     ln -s "$menu_path" /usr/local/bin/conduit
 }
@@ -209,27 +235,22 @@ EOF
 #═══════════════════════════════════════════════════════════════════════
 
 detect_os
-
-# 1. Clean & Repair
 deep_clean_system
-
-# 2. Install
 install_dependencies
 install_docker
-
-# 3. Run
 check_restore
 run_conduit
 save_conf
+setup_autostart  # <--- NEW: Forces auto-start
 create_menu
 
 echo ""
 log_success "INSTALLATION COMPLETE."
-echo "------------------------------------------------"
-echo "To access the menu, type: conduit"
-echo "------------------------------------------------"
+echo "--------------------------------------------------------"
+echo -e " To open the menu again later, type: ${YELLOW}conduit${NC}"
+echo "--------------------------------------------------------"
 echo "Launching menu now..."
-sleep 2
+sleep 3
 
 if [ -f "/usr/local/bin/conduit" ]; then
     exec /usr/local/bin/conduit menu
