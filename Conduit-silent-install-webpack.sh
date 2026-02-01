@@ -1,11 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v3.1 (PERFECT STATIC + SMART FW)    ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v4.0 (FIXED STATIC ENGINE)          ║
 # ║                                                                   ║
-# ║  • BASE: Based on the "No-Flicker" Static Version (v2.2)          ║
-# ║  • ADDED: Smart Firewall (Iran VIP + World Throttling)            ║
-# ║  • FEATURE: Auto-Start + Deep Repair included                     ║
+# ║  • NO FLICKER: Uses standard blocking input (Wait for keypress).  ║
+# ║  • SMART FW: Includes Iran-VIP logic without auto-refresh UI.     ║
+# ║  • CLEAN: Reverted to standard menu logic.                        ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -18,7 +18,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 set -e
 
-# --- 2. VARIABLES ---
+# --- 2. CONFIGURATION ---
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="/opt/conduit"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -34,11 +34,11 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
-# 3. DEEP CLEAN & REPAIR (برای رفع خطاهای قبلی سرور شما)
+# 3. DEEP CLEAN & REPAIR
 #═══════════════════════════════════════════════════════════════════════
-echo -e "${BLUE}[INFO] Performing System Repair...${NC}"
+echo -e "${BLUE}[INFO] System Check...${NC}"
 
-# Kill stuck processes
+# Kill processes that might block installation
 killall apt apt-get dpkg 2>/dev/null || true
 
 # Fix APT locks
@@ -46,10 +46,11 @@ rm -f /var/lib/apt/lists/lock
 rm -f /var/cache/apt/archives/lock
 rm -f /var/lib/dpkg/lock*
 
-# Install Dependencies (ipset added for firewall)
+# Install Dependencies
 if [ -f /etc/debian_version ]; then
     dpkg --configure -a >/dev/null 2>&1 || true
     apt-get update -q -y >/dev/null 2>&1 || true
+    # ipset is needed for the smart firewall
     apt-get install -y -q curl gawk tcpdump geoip-bin geoip-database qrencode ipset >/dev/null 2>&1 || true
 elif [ -f /etc/alpine-release ]; then
     apk add --no-cache curl gawk tcpdump geoip qrencode ipset >/dev/null 2>&1 || true
@@ -65,7 +66,7 @@ rm -f /usr/local/bin/conduit
 #═══════════════════════════════════════════════════════════════════════
 # 4. INSTALL DOCKER & RESTORE
 #═══════════════════════════════════════════════════════════════════════
-echo -e "${BLUE}[INFO] Checking Docker...${NC}"
+echo -e "${BLUE}[INFO] Installing Docker...${NC}"
 if ! command -v docker &>/dev/null; then
     curl -fsSL https://get.docker.com | sh >/dev/null 2>&1 || true
     systemctl start docker >/dev/null 2>&1 || true
@@ -85,7 +86,7 @@ if [ -d "$BACKUP_DIR" ]; then
 fi
 
 #═══════════════════════════════════════════════════════════════════════
-# 5. START CONDUIT (50 Users / 5 Mbps)
+# 5. START CONDUIT (50 Clients / 5 Mbps)
 #═══════════════════════════════════════════════════════════════════════
 echo -e "${BLUE}[INFO] Starting Service...${NC}"
 docker volume create conduit-data >/dev/null 2>&1 || true
@@ -130,7 +131,7 @@ if command -v systemctl &>/dev/null; then
 fi
 
 #═══════════════════════════════════════════════════════════════════════
-# 7. FIREWALL SCRIPT (The Smart Logic)
+# 7. FIREWALL SCRIPT (SMART LOGIC)
 #═══════════════════════════════════════════════════════════════════════
 cat << 'EOF' > "$FW_SCRIPT"
 #!/bin/bash
@@ -157,8 +158,7 @@ do_enable() {
     # 2. Allow Iran (VIP - Unlimited)
     iptables -A INPUT -m set --match-set $IPSET src -j ACCEPT
     
-    # 3. Smart Throttle Others (Allows Trackers, Blocks Abusers)
-    #    Max 3 connections per minute per IP for non-Iranians
+    # 3. Smart Throttle Others (3 connections / 60s)
     iptables -A INPUT -m state --state NEW -m recent --set
     iptables -A INPUT -m state --state NEW -m recent --update --seconds 60 --hitcount 3 -j DROP
     iptables -A INPUT -j ACCEPT
@@ -180,7 +180,7 @@ EOF
 chmod +x "$FW_SCRIPT"
 
 #═══════════════════════════════════════════════════════════════════════
-# 8. THE STATIC MENU (No Flickering!)
+# 8. STATIC MENU GENERATOR (NO REFRESH LOOP)
 #═══════════════════════════════════════════════════════════════════════
 cat << 'EOF' > "$MENU_SCRIPT"
 #!/bin/bash
@@ -191,24 +191,26 @@ RED='\033[1;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# The menu loop
 while true; do
     clear
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║         🚀 CONDUIT MANAGER v3.1 (STATIC MENU)              ║${NC}"
+    echo -e "${CYAN}║           🚀 CONDUIT MANAGER v4.0 (STATIC)                 ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
-    # Status Checks (Run once per menu load)
+    # Status (Run Once per menu load)
     if docker ps | grep -q conduit; then
         echo -e "  SERVICE:  ${GREEN}RUNNING${NC}"
     else
         echo -e "  SERVICE:  ${RED}STOPPED${NC}"
     fi
 
+    # Firewall Status
     if iptables -L INPUT 2>/dev/null | grep -q "match-set iran_ips"; then
-        echo -e "  FILTER:   ${GREEN}SMART (Iran VIP + World Throttled)${NC}"
+        echo -e "  FILTER:   ${GREEN}SMART (Iran Unlimited / World Throttled)${NC}"
     else
-        echo -e "  FILTER:   ${YELLOW}OPEN (Default)${NC}"
+        echo -e "  FILTER:   ${YELLOW}OPEN (No Restrictions)${NC}"
     fi
 
     echo ""
@@ -217,18 +219,19 @@ while true; do
     echo "  [3] 🔄 Restart Service"
     echo "  [4] 🛑 Stop Service"
     echo "  -----------------------"
-    echo "  [5] 🧠 Enable Smart Filter (Recommended)"
+    echo "  [5] 🧠 Enable Smart Filter"
     echo "  [6] 🔓 Disable Filter"
     echo "  -----------------------"
     echo "  [0] 🚪 Exit"
     echo ""
     
-    # This is the key: A blocking read wait (NO TIMEOUT)
+    # !!! IMPORTANT: This 'read' waits forever. No timeout. No flickering.
     read -p "  Select option: " choice
     
     case $choice in
         1)
             echo -e "\n${CYAN}--- USERS SNAPSHOT ---${NC}"
+            # Simple check, no loops
             ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr | head -n 15
             echo ""
             read -p "Press Enter to return..."
