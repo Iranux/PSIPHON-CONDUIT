@@ -1,14 +1,15 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║      🚀 PSIPHON CONDUIT MANAGER v2.0 Iranux Version                             ║
+# ║      🚀 PSIPHON CONDUIT MANAGER v2.0 Iranux Version               ║
 # ║                                                                   ║
 # ║  One-click setup for Psiphon Conduit                              ║
 # ║                                                                   ║
 # ║  • Installs Docker (if needed)                                    ║
-# ║  • Runs Conduit in Docker with live stats                         
+# ║  • Runs Conduit in Docker with live stats                         ║
 # ║  • Auto-start on boot via systemd/OpenRC/SysVinit                 ║
-# ║  • Easy management via CLI or interactive menu                    ║
+# ║  • Easy management via CLI or interactive menu 
+# ║   • Iran IP access only                                           ║
 # ║                                                                   ║
 # ║  GitHub: https://github.com/Psiphon-Inc/conduit                   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
