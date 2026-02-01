@@ -1,24 +1,23 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v5.0 (THE NUCLEAR FIX)              ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v4.2 (FINAL STABLE)                 ║
 # ║                                                                   ║
-# ║  • KILL SWITCH: Forcefully kills background loops causing flicker ║
-# ║  • ENGINE: Stable v1.8 base + Smart Firewall + AutoStart          ║
-# ║  • MENU: 100% Manual Refresh (Absolute Zero Flicker)              ║
+# ║  • CLEAN INSTALL on a clean system.                               ║
+# ║  • MENU: Static (No auto-refresh loop).                           ║
+# ║  • FIREWALL: Smart Iran-VIP logic.                                ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
-# --- 1. ROOT CHECK ---
 if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root: sudo bash $0"
+    echo "Run with sudo!"
     exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 set -e
 
-# --- 2. CONFIGURATION ---
+# --- VARIABLES ---
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="/opt/conduit"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -29,80 +28,31 @@ FW_SCRIPT="$INSTALL_DIR/firewall.sh"
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-#═══════════════════════════════════════════════════════════════════════
-# 3. NUCLEAR CLEANUP (KILL THE FLICKER)
-#═══════════════════════════════════════════════════════════════════════
-echo -e "${RED}[!!!] KILLING BACKGROUND PROCESSES...${NC}"
-
-# Kill any previous menu scripts running in background
-pkill -f "conduit" || true
-pkill -f "menu.sh" || true
-pkill -f "watch" || true
-# Kill sleep commands that might be part of a loop (Safe on servers)
-pkill -f "sleep" || true
-
-echo -e "${GREEN}[✓] Background noise silenced.${NC}"
-
-#═══════════════════════════════════════════════════════════════════════
-# 4. DEEP CLEAN & REPAIR
-#═══════════════════════════════════════════════════════════════════════
-echo -e "${BLUE}[INFO] System Repair...${NC}"
-
-# Kill stuck pkg managers
-killall apt apt-get dpkg 2>/dev/null || true
-rm -f /var/lib/apt/lists/lock 
-rm -f /var/cache/apt/archives/lock
-rm -f /var/lib/dpkg/lock*
-
-# Install Dependencies
+echo -e "${CYAN}[INFO] Installing Dependencies...${NC}"
 if [ -f /etc/debian_version ]; then
-    dpkg --configure -a >/dev/null 2>&1 || true
     apt-get update -q -y >/dev/null 2>&1 || true
     apt-get install -y -q curl gawk tcpdump geoip-bin geoip-database qrencode ipset >/dev/null 2>&1 || true
 elif [ -f /etc/alpine-release ]; then
     apk add --no-cache curl gawk tcpdump geoip qrencode ipset >/dev/null 2>&1 || true
 fi
 
-# Clean old installation
-if command -v docker &>/dev/null; then
-    docker stop conduit 2>/dev/null || true
-    docker rm conduit 2>/dev/null || true
-fi
-rm -f /usr/local/bin/conduit
-
-#═══════════════════════════════════════════════════════════════════════
-# 5. INSTALL DOCKER & RESTORE
-#═══════════════════════════════════════════════════════════════════════
-echo -e "${BLUE}[INFO] Installing Docker...${NC}"
+echo -e "${CYAN}[INFO] Setting up Docker...${NC}"
 if ! command -v docker &>/dev/null; then
     curl -fsSL https://get.docker.com | sh >/dev/null 2>&1 || true
     systemctl start docker >/dev/null 2>&1 || true
     systemctl enable docker >/dev/null 2>&1 || true
 fi
 
-echo -e "${BLUE}[INFO] Checking Backup...${NC}"
+echo -e "${CYAN}[INFO] Starting Conduit (50 Users / 5 Mbps)...${NC}"
 mkdir -p "$INSTALL_DIR"
-if [ -d "$BACKUP_DIR" ]; then
-    BACKUP_FILE=$(ls -t "$BACKUP_DIR"/conduit_key_*.json 2>/dev/null | head -1)
-    if [ -n "$BACKUP_FILE" ]; then
-        echo -e "${GREEN}[✓] Restoring Identity...${NC}"
-        docker volume create conduit-data >/dev/null 2>&1 || true
-        docker run --rm -v conduit-data:/data -v "$BACKUP_DIR":/bkp alpine \
-            sh -c "cp /bkp/$(basename "$BACKUP_FILE") /data/conduit_key.json && chown 1000:1000 /data/conduit_key.json"
-    fi
-fi
-
-#═══════════════════════════════════════════════════════════════════════
-# 6. START CONDUIT (50 Clients / 5 Mbps)
-#═══════════════════════════════════════════════════════════════════════
-echo -e "${BLUE}[INFO] Starting Service...${NC}"
+docker stop conduit 2>/dev/null || true
+docker rm conduit 2>/dev/null || true
 docker volume create conduit-data >/dev/null 2>&1 || true
-docker run --rm -v conduit-data:/data alpine chown -R 1000:1000 /data >/dev/null 2>&1 || true
 
+# START CONTAINER
 docker run -d \
     --name conduit \
     --restart unless-stopped \
@@ -112,18 +62,15 @@ docker run -d \
     "$CONDUIT_IMAGE" \
     start --max-clients 50 --bandwidth 5 --stats-file >/dev/null
 
-# Save Config
+# SAVE CONFIG
 echo "MAX_CLIENTS=50" > "$INSTALL_DIR/settings.conf"
 echo "BANDWIDTH=5" >> "$INSTALL_DIR/settings.conf"
 
-#═══════════════════════════════════════════════════════════════════════
-# 7. AUTO-START (Systemd)
-#═══════════════════════════════════════════════════════════════════════
+# ENABLE AUTO-START
 cat > /etc/systemd/system/conduit.service << EOF
 [Unit]
-Description=Psiphon Conduit Service
+Description=Psiphon Conduit
 After=docker.service network-online.target
-Wants=docker.service network-online.target
 
 [Service]
 Type=oneshot
@@ -134,65 +81,41 @@ ExecStop=/usr/bin/docker stop conduit
 [Install]
 WantedBy=multi-user.target
 EOF
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl enable conduit.service >/dev/null 2>&1 || true
 
-if command -v systemctl &>/dev/null; then
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl enable conduit.service >/dev/null 2>&1 || true
-    systemctl start conduit.service >/dev/null 2>&1 || true
-fi
-
-#═══════════════════════════════════════════════════════════════════════
-# 8. FIREWALL SCRIPT (SMART LOGIC)
-#═══════════════════════════════════════════════════════════════════════
+# CREATE FIREWALL SCRIPT
 cat << 'EOF' > "$FW_SCRIPT"
 #!/bin/bash
-IP_LIST="https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ir.cidr"
 IPSET="iran_ips"
-CYAN='\033[1;36m'
-GREEN='\033[1;32m'
-NC='\033[0m'
+URL="https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ir.cidr"
 
-do_enable() {
-    echo -e "${CYAN}Downloading Iran IP List...${NC}"
-    if ! curl -sL "$IP_LIST" -o /tmp/ir.cidr; then echo "Download failed"; return; fi
-    
+if [ "$1" == "enable" ]; then
+    echo "Downloading Iran IPs..."
     ipset create $IPSET hash:net -exist
     ipset flush $IPSET
-    while read line; do [[ "$line" =~ ^# ]] || ipset add $IPSET "$line" -exist; done < /tmp/ir.cidr
+    curl -sL "$URL" | while read line; do [[ "$line" =~ ^# ]] || ipset add $IPSET "$line" -exist; done
     
     iptables -F INPUT
-    # 1. Essential
     iptables -A INPUT -i lo -j ACCEPT
     iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-    
-    # 2. Iran VIP (Unlimited)
+    # Iran Unlimited
     iptables -A INPUT -m set --match-set $IPSET src -j ACCEPT
-    
-    # 3. Smart Throttle Others
+    # Others Throttled (Allow Trackers)
     iptables -A INPUT -m state --state NEW -m recent --set
     iptables -A INPUT -m state --state NEW -m recent --update --seconds 60 --hitcount 3 -j DROP
     iptables -A INPUT -j ACCEPT
-    
-    echo -e "${GREEN}SMART FIREWALL ENABLED.${NC}"
-}
-
-do_disable() {
+    echo "Smart Firewall ENABLED."
+else
     iptables -P INPUT ACCEPT
     iptables -F INPUT
-    echo -e "${GREEN}FIREWALL DISABLED.${NC}"
-}
-
-case "$1" in
-    enable) do_enable ;;
-    disable) do_disable ;;
-esac
+    echo "Firewall DISABLED."
+fi
 EOF
 chmod +x "$FW_SCRIPT"
 
-#═══════════════════════════════════════════════════════════════════════
-# 9. STATIC MENU GENERATOR (MANUAL REFRESH ONLY)
-#═══════════════════════════════════════════════════════════════════════
+# CREATE STATIC MENU
 cat << 'EOF' > "$MENU_SCRIPT"
 #!/bin/bash
 FW="/opt/conduit/firewall.sh"
@@ -202,33 +125,30 @@ RED='\033[1;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# No loop here for the header to avoid any risk of auto-looping
 while true; do
     clear
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║         🚀 CONDUIT MANAGER v5.0 (NUCLEAR FIX)              ║${NC}"
+    echo -e "${CYAN}║      🚀 CONDUIT MANAGER v4.2 (FINAL STATIC)                ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
-    # Check Service
     if docker ps | grep -q conduit; then
-        echo -e "  SERVICE:  ${GREEN}RUNNING${NC}"
+        echo -e "  STATUS:   ${GREEN}RUNNING${NC}"
     else
-        echo -e "  SERVICE:  ${RED}STOPPED${NC}"
+        echo -e "  STATUS:   ${RED}STOPPED${NC}"
     fi
 
-    # Check Firewall
     if iptables -L INPUT 2>/dev/null | grep -q "match-set iran_ips"; then
-        echo -e "  FILTER:   ${GREEN}SMART (Iran VIP)${NC}"
+        echo -e "  FIREWALL: ${GREEN}SMART (Iran VIP)${NC}"
     else
-        echo -e "  FILTER:   ${YELLOW}OPEN${NC}"
+        echo -e "  FIREWALL: ${YELLOW}OPEN (No Limits)${NC}"
     fi
 
     echo ""
     echo "  [1] 👥 Active Users (Snapshot)"
-    echo "  [2] 📄 View Logs"
-    echo "  [3] 🔄 Restart Service"
-    echo "  [4] 🛑 Stop Service"
+    echo "  [2] 📄 Logs"
+    echo "  [3] 🔄 Restart"
+    echo "  [4] 🛑 Stop"
     echo "  -----------------------"
     echo "  [5] 🧠 Enable Smart Filter"
     echo "  [6] 🔓 Disable Filter"
@@ -236,44 +156,20 @@ while true; do
     echo "  [0] 🚪 Exit"
     echo ""
     
-    # BLOCKING READ: The script STOPS here until YOU press a key.
-    # It cannot flicker because it is paused.
+    # WAITS HERE FOREVER. NO FLICKER.
     read -p "  Select option: " choice
     
     case $choice in
         1)
-            echo -e "\n${CYAN}--- USERS SNAPSHOT ---${NC}"
+            echo -e "\n${CYAN}--- USERS ---${NC}"
             ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr | head -n 15
-            echo ""
-            read -p "Press Enter to return..."
-            ;;
-        2) 
-            echo -e "\n${CYAN}--- LOGS (Ctrl+C to exit) ---${NC}"
-            docker logs -f --tail 50 conduit
-            ;;
-        3)
-            echo "Restarting..."
-            docker restart conduit
-            sleep 1
-            ;;
-        4)
-            echo "Stopping..."
-            docker stop conduit
-            sleep 1
-            ;;
-        5)
-            bash "$FW" enable
-            read -p "Press Enter to return..."
-            ;;
-        6)
-            bash "$FW" disable
-            read -p "Press Enter to return..."
-            ;;
-        0) 
-            clear
-            exit 0 
-            ;;
-        *) ;;
+            read -p "Press Enter..." ;;
+        2) docker logs --tail 50 -f conduit ;;
+        3) docker restart conduit; sleep 1 ;;
+        4) docker stop conduit; sleep 1 ;;
+        5) bash "$FW" enable; read -p "Press Enter..." ;;
+        6) bash "$FW" disable; read -p "Press Enter..." ;;
+        0) clear; exit 0 ;;
     esac
 done
 EOF
@@ -281,13 +177,6 @@ chmod +x "$MENU_SCRIPT"
 rm -f /usr/local/bin/conduit
 ln -s "$MENU_SCRIPT" /usr/local/bin/conduit
 
-#═══════════════════════════════════════════════════════════════════════
-# 10. FINISH
-#═══════════════════════════════════════════════════════════════════════
 echo ""
-echo -e "${GREEN}[✓] INSTALLATION COMPLETE.${NC}"
-echo "------------------------------------------------"
-echo -e " To open menu: ${YELLOW}conduit${NC}"
-echo "------------------------------------------------"
-sleep 2
-exec /usr/local/bin/conduit
+echo -e "${GREEN}[✓] INSTALLED.${NC}"
+echo "Type 'conduit' to open menu."
