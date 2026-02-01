@@ -1,11 +1,11 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v2.5 (SMART TRAFFIC SHAPER)         ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v2.6 (ZERO FLICKER EDITION)         ║
 # ║                                                                   ║
-# ║  • SMART: Allows Iran IPs fully (Unlimited)                       ║
-# ║  • CLEVER: Throttles Non-Iran IPs (Allows Trackers, Blocks Users) ║
-# ║  • SAFE: Guarantees Node Discovery by Psiphon Network             ║
+# ║  • FIXED: Menu is 100% static (No auto-refresh loop)              ║
+# ║  • SMART: Includes Iran-VIP Smart Firewall logic                  ║
+# ║  • STABLE: No screen flashing whatsoever                          ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
@@ -76,7 +76,6 @@ deep_clean_system() {
 
 install_dependencies() {
     log_info "Installing dependencies..."
-    # 'ipset' is critical for this version
     local pkgs="curl gawk tcpdump geoip-bin geoip-database qrencode ipset"
     
     if [ "$PKG_MANAGER" = "apt" ]; then
@@ -160,7 +159,7 @@ EOF
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# SMART FIREWALL LOGIC (The "Smart" Part)
+# SMART FIREWALL LOGIC
 #═══════════════════════════════════════════════════════════════════════
 
 setup_firewall_script() {
@@ -214,17 +213,13 @@ enable_smart_firewall() {
     
     # 4. SMART GATE: Allow Non-Iran IPs BUT Limit Connections
     #    (Allows Trackers to check port, Blocks Users who need persistent streams)
-    #    Limit: 3 new connections per 60 seconds.
     iptables -A INPUT -m state --state NEW -m recent --set
     iptables -A INPUT -m state --state NEW -m recent --update --seconds 60 --hitcount 3 -j DROP
     
     # 5. If they pass the limit (Scanners), Accept them.
     iptables -A INPUT -j ACCEPT
     
-    echo -e "${GREEN}SMART FILTER ACTIVE:${NC}"
-    echo -e "  - Iran IPs:  ${GREEN}UNLIMITED${NC}"
-    echo -e "  - Scanners:  ${GREEN}ALLOWED (Low Rate)${NC}"
-    echo -e "  - Outsiders: ${RED}THROTTLED (Unusable for streaming)${NC}"
+    echo -e "${GREEN}SMART FILTER ACTIVE.${NC}"
 }
 
 disable_firewall() {
@@ -243,11 +238,11 @@ EOF
 }
 
 #═══════════════════════════════════════════════════════════════════════
-# MENU
+# MENU (100% STATIC - NO LOOP REFRESH)
 #═══════════════════════════════════════════════════════════════════════
 
 create_custom_menu() {
-    log_info "Installing Menu..."
+    log_info "Installing Static Menu..."
     local menu_path="$INSTALL_DIR/conduit"
     setup_firewall_script
     
@@ -263,22 +258,23 @@ NC='\033[0m'
 while true; do
     clear
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║         🚀 CONDUIT MANAGER v2.5 (SMART FILTER)             ║${NC}"
+    echo -e "${CYAN}║         🚀 CONDUIT MANAGER v2.6 (STATIC MENU)              ║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
+    # --- STATUS CHECK (Runs once per page load) ---
     if docker ps | grep -q conduit; then
         echo -e "  SERVICE:  ${GREEN}RUNNING${NC}"
     else
         echo -e "  SERVICE:  ${RED}STOPPED${NC}"
     fi
     
-    # Check firewall logic
     if iptables -L INPUT | grep -q "match-set iran_ips"; then
          echo -e "  FILTER:   ${GREEN}SMART IRAN ONLY (Active)${NC}"
     else
          echo -e "  FILTER:   ${YELLOW}OPEN TO WORLD (Default)${NC}"
     fi
+    # -----------------------------------------------
     
     echo ""
     echo "  [1] 👥 Check Active Users"
@@ -291,35 +287,39 @@ while true; do
     echo "  -----------------------"
     echo "  [0] 🚪 Exit"
     echo ""
+    
+    # NO TIMEOUT HERE - WAITS FOREVER
     read -p "  Select option: " choice
     
     case $choice in
         1)
-            echo -e "\n${CYAN}--- Active Connections (One-time) ---${NC}"
+            echo -e "\n${CYAN}--- Active Connections (Snapshot) ---${NC}"
             connections=$(ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr | head -n 10)
             if [ -z "$connections" ]; then echo "No users found."; else echo "$connections"; fi
             echo ""
-            read -p "Press Enter..."
+            read -p "Press Enter to return..."
             ;;
         2) 
-            docker logs --tail 50 conduit
-            read -p "Press Enter..."
+            echo -e "\n${CYAN}--- LOGS (Press CTRL+C to exit) ---${NC}"
+            docker logs -f --tail 50 conduit
             ;;
         3)
+            echo -e "\n${YELLOW}Restarting...${NC}"
             docker restart conduit
             sleep 1
             ;;
         4)
+            echo -e "\n${RED}Stopping...${NC}"
             docker stop conduit
             sleep 1
             ;;
         5)
             bash "$FW_SCRIPT" enable
-            read -p "Press Enter..."
+            read -p "Press Enter to return..."
             ;;
         6)
             bash "$FW_SCRIPT" disable
-            read -p "Press Enter..."
+            read -p "Press Enter to return..."
             ;;
         0) 
             clear
