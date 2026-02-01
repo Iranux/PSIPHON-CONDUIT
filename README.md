@@ -7,41 +7,28 @@
  ██║     ██║   ██║██║╚██╗██║██║  ██║██║   ██║██║   ██║
  ╚██████╗╚██████╔╝██║ ╚████║██████╔╝╚██████╔╝██║   ██║
   ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═════╝  ╚═════╝ ╚═╝   ╚═╝
-                      M A N A G E R
+                      M A N A G E R - SILENT MODE
 ```
 
-![Version](https://img.shields.io/badge/version-1.2-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Platform](https://img.shields.io/badge/platform-Linux-orange)
-![Docker](https://img.shields.io/badge/Docker-Required-2496ED?logo=docker&logoColor=white)
-![Bash](https://img.shields.io/badge/Bash-Script-4EAA25?logo=gnubash&logoColor=white)
 
 A powerful management tool for deploying and managing Psiphon Conduit nodes on Linux servers. Help users access the open internet during network restrictions.
 
-## Screenshots
 
-| Main Menu | Live Dashboard |
-|:-:|:-:|
-| ![Main Menu](conduit-menu.png) | ![Live Stats](conduit-stats.png) |
-
-| Live Map | Advanced Stats |
-|:-:|:-:|
-| ![Live Map](conduit-live-map.png) | ![Advanced Stats](conduit-advanced-stats.png) |
 
 ## Quick Install
 
 ```bash
-curl -sL https://raw.githubusercontent.com/SamNet-dev/conduit-manager/main/conduit.sh | sudo bash
+curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/conduit.sh | sudo bash
 ```
 
 Or download and run manually:
 
 ```bash
-wget https://raw.githubusercontent.com/SamNet-dev/conduit-manager/main/conduit.sh
+wget https://raw.githubusercontent.com/iranux/conduit-manager/main/conduit.sh
 sudo bash conduit.sh
 ```
 
-## What's New in v1.2
+## What's New in v1.3
 
 - **Per-Container Resource Limits** — Set CPU and memory limits per container via Settings menu with smart defaults
 - **Telegram Bot Integration** — Periodic status reports, alerts, and commands (`/status`, `/peers`, `/uptime`, `/containers`, `/restart_N`, `/stop_N`, `/start_N`)
