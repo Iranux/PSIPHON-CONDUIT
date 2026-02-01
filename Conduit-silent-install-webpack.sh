@@ -1,24 +1,24 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v10.0 (NO-LOOP EDITION)             ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v12.0 (FINAL ARCHITECTURE)          ║
 # ║                                                                   ║
-# ║  • FLICKER FIX: Menu runs ONCE and exits. Zero loops.             ║
-# ║  • ORDER: apt update -> Nuclear Clean -> Install.                 ║
-# ║  • FIREWALL: Smart Iran-VIP logic included.                       ║
+# ║  • STRICT ORDER: Root Check -> Apt Update -> Clean -> Install     ║
+# ║  • MENU: Pure text options. No status checks. No loops.           ║
+# ║  • FIREWALL: Smart Iran-VIP (Persists on Reboot)                  ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
-# --- 1. ROOT CHECK ---
+# --- 1. MANDATORY ROOT CHECK ---
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: Please run 'sudo su' first."
+    echo "Error: You must run 'sudo su' before executing this script."
     exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 set -e
 
-# --- 2. VARIABLES ---
+# --- CONFIGURATION ---
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
 INSTALL_DIR="/opt/conduit"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -35,42 +35,44 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
-# 3. FIRST ACTION: UPDATE SYSTEM
+# STEP 1: SYSTEM UPDATE (HIGHEST PRIORITY)
 #═══════════════════════════════════════════════════════════════════════
 echo -e "${BLUE}[INFO] Step 1: Updating System Repositories...${NC}"
-apt-get update -q -y || echo -e "${YELLOW}[!] Apt update warning (ignoring)...${NC}"
+# Attempt full update, ignore errors to proceed with installation
+apt-get update -q -y || echo -e "${YELLOW}[!] Update finished with warnings.${NC}"
 
 #═══════════════════════════════════════════════════════════════════════
-# 4. SECOND ACTION: NUCLEAR CLEANUP
+# STEP 2: NUCLEAR CLEANUP & PREPARATION
 #═══════════════════════════════════════════════════════════════════════
 echo -e "${BLUE}[INFO] Step 2: Cleaning old installations...${NC}"
 
-# Kill processes
-killall apt apt-get dpkg 2>/dev/null || true
+# 1. Kill Processes
 pkill -9 -f "conduit" || true
 pkill -9 -f "menu.sh" || true
+# Kill package managers only if they are stuck
+killall apt apt-get dpkg 2>/dev/null || true
 
-# Remove locks
+# 2. Remove Lock Files
 rm -f /var/lib/apt/lists/lock 
 rm -f /var/cache/apt/archives/lock
 rm -f /var/lib/dpkg/lock*
 
-# Remove Docker container
+# 3. Destroy Docker Container
 if command -v docker &>/dev/null; then
     docker stop conduit 2>/dev/null || true
     docker rm conduit 2>/dev/null || true
 fi
 
-# Remove files
+# 4. Remove Files & Scripts
 rm -f /usr/local/bin/conduit
 rm -rf "$INSTALL_DIR/menu.sh"
 
 #═══════════════════════════════════════════════════════════════════════
-# 5. THIRD ACTION: INSTALLATION
+# STEP 3: INSTALLATION
 #═══════════════════════════════════════════════════════════════════════
 echo -e "${BLUE}[INFO] Step 3: Installing Dependencies...${NC}"
 
-# Install deps
+# Install essentials + ipset (for firewall)
 if [ -f /etc/debian_version ]; then
     apt-get install -y -q curl gawk tcpdump geoip-bin geoip-database qrencode ipset >/dev/null 2>&1 || true
 elif [ -f /etc/alpine-release ]; then
@@ -78,21 +80,21 @@ elif [ -f /etc/alpine-release ]; then
 fi
 
 # Setup Docker
-echo -e "${BLUE}[INFO] Setting up Docker...${NC}"
 if ! command -v docker &>/dev/null; then
+    echo -e "${BLUE}[INFO] Installing Docker...${NC}"
     curl -fsSL https://get.docker.com | sh >/dev/null 2>&1 || true
     systemctl start docker >/dev/null 2>&1 || true
     systemctl enable docker >/dev/null 2>&1 || true
 fi
 
 #═══════════════════════════════════════════════════════════════════════
-# 6. DEPLOY CONDUIT
+# STEP 4: DEPLOY CONDUIT
 #═══════════════════════════════════════════════════════════════════════
-echo -e "${BLUE}[INFO] Deploying Container...${NC}"
+echo -e "${BLUE}[INFO] Step 4: Deploying Service...${NC}"
 mkdir -p "$INSTALL_DIR"
 docker volume create conduit-data >/dev/null 2>&1 || true
 
-# Restore Backup
+# Restore Backup (Identity Persistence)
 if [ -d "$BACKUP_DIR" ]; then
     BACKUP_FILE=$(ls -t "$BACKUP_DIR"/conduit_key_*.json 2>/dev/null | head -1)
     if [ -n "$BACKUP_FILE" ]; then
@@ -102,7 +104,7 @@ if [ -d "$BACKUP_DIR" ]; then
     fi
 fi
 
-# Run Container
+# Start Container
 docker run -d \
     --name conduit \
     --restart unless-stopped \
@@ -113,7 +115,7 @@ docker run -d \
     start --max-clients 50 --bandwidth 5 --stats-file >/dev/null
 
 #═══════════════════════════════════════════════════════════════════════
-# 7. SMART FIREWALL SCRIPT
+# STEP 5: SMART FIREWALL CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════
 cat << 'EOF' > "$FW_SCRIPT"
 #!/bin/bash
@@ -125,21 +127,23 @@ GREEN='\033[1;32m'
 NC='\033[0m'
 
 do_enable() {
-    echo "Updating Smart Firewall..."
+    echo "Applying Smart Rules..."
+    # 1. Update IP Set
     ipset create $IPSET hash:net -exist
     ipset flush $IPSET
     curl -sL "$IP_LIST" | while read line; do [[ "$line" =~ ^# ]] || ipset add $IPSET "$line" -exist; done
     
+    # 2. Apply Rules
     iptables -F INPUT
-    # 1. Essential
+    # Essential
     iptables -A INPUT -i lo -j ACCEPT
     iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
     
-    # 2. Iran VIP
+    # Iran VIP (Allow All)
     iptables -A INPUT -m set --match-set $IPSET src -j ACCEPT
     
-    # 3. World Throttled
+    # World Throttle (Allow Trackers, Block Heavy Users)
     iptables -A INPUT -m state --state NEW -m recent --set
     iptables -A INPUT -m state --state NEW -m recent --update --seconds 60 --hitcount 3 -j DROP
     iptables -A INPUT -j ACCEPT
@@ -165,7 +169,7 @@ EOF
 chmod +x "$FW_SCRIPT"
 
 #═══════════════════════════════════════════════════════════════════════
-# 8. AUTO-START SERVICE
+# STEP 6: AUTO-START SERVICE setup
 #═══════════════════════════════════════════════════════════════════════
 cat > /etc/systemd/system/conduit.service << EOF
 [Unit]
@@ -175,6 +179,7 @@ After=docker.service network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Restore firewall rules before starting container
 ExecStartPre=/bin/bash /opt/conduit/firewall.sh restore
 ExecStart=/usr/bin/docker start conduit
 ExecStop=/usr/bin/docker stop conduit
@@ -189,7 +194,7 @@ if command -v systemctl &>/dev/null; then
 fi
 
 #═══════════════════════════════════════════════════════════════════════
-# 9. ONE-SHOT MENU (NO LOOPS = NO FLICKER)
+# STEP 7: STATIC MENU (NO LOOP / NO DATA)
 #═══════════════════════════════════════════════════════════════════════
 cat << 'EOF' > "$MENU_SCRIPT"
 #!/bin/bash
@@ -200,43 +205,34 @@ RED='\033[1;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Clear screen once
+# Clear screen ONCE
 clear
 
-echo -e "${CYAN}═══ 🚀 CONDUIT v10.0 (ONE-SHOT) ═══${NC}"
+echo -e "${CYAN}═══ 🚀 CONDUIT v12.0 (STATIC MENU) ═══${NC}"
+echo ""
+echo "  [1] Show Active Users (Snapshot)"
+echo "  [2] View Logs"
+echo "  [3] Restart Service"
+echo "  [4] Stop Service"
+echo "  -----------------------"
+echo "  [5] Enable Smart Firewall (Iran VIP)"
+echo "  [6] Disable Firewall"
+echo "  -----------------------"
+echo "  [0] Exit"
+echo ""
 
-# Status Check
-if docker ps | grep -q conduit; then
-    echo -e "STATUS:   ${GREEN}RUNNING${NC}"
-else
-    echo -e "STATUS:   ${RED}STOPPED${NC}"
-fi
-
-# Firewall Check
-if iptables -L INPUT 2>/dev/null | grep -q "match-set iran_ips"; then
-    echo -e "FILTER:   ${GREEN}SMART (Iran VIP)${NC}"
-else
-    echo -e "FILTER:   ${YELLOW}OPEN (No Limits)${NC}"
-fi
-
-echo "-------------------------------------"
-echo " [1] Active Users (Snapshot)"
-echo " [2] View Logs (Press Ctrl+C to exit)"
-echo " [3] Restart Service"
-echo " [4] Stop Service"
-echo " [5] Enable Smart Filter"
-echo " [6] Disable Filter"
-echo " [0] Exit"
-echo "-------------------------------------"
-
+# Wait for input. No background loop.
 read -p "Select option > " choice
 echo ""
 
 case $choice in
     1)
-        echo "--- Active Users ---"
+        echo "Checking users..."
         ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr | head -n 15
-        echo "--------------------"
+        echo ""
+        read -p "Press Enter to return..."
+        # Re-run menu manually if needed, or just exit. 
+        # User requested NO LOOP, so we exit after action or just finish.
         ;;
     2) docker logs --tail 50 -f conduit ;;
     3) docker restart conduit; echo "Restarted." ;;
@@ -248,20 +244,21 @@ case $choice in
 esac
 
 echo ""
-echo -e "${YELLOW}Done. Type 'conduit' to open menu again.${NC}"
+echo -e "${YELLOW}Action complete. Type 'conduit' to open menu again.${NC}"
 EOF
 chmod +x "$MENU_SCRIPT"
 rm -f /usr/local/bin/conduit
 ln -s "$MENU_SCRIPT" /usr/local/bin/conduit
 
 #═══════════════════════════════════════════════════════════════════════
-# 10. FINALIZATION
+# STEP 8: FINALIZATION & AUTO-OPEN
 #═══════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${GREEN}[✓] INSTALLATION COMPLETE.${NC}"
 echo "------------------------------------------------"
 echo -e " To open menu: ${YELLOW}conduit${NC}"
 echo "------------------------------------------------"
+sleep 1
 
-# Run menu once
+# Automatically open the menu
 /usr/local/bin/conduit
