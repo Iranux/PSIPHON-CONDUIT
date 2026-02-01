@@ -25,7 +25,7 @@ Or download and run manually:
 
 ```bash
 wget https://raw.githubusercontent.com/iranux/conduit-manager/main/Conduit-silent-install-webpack.sh
-sudo bash conduit.sh
+sudo bash Conduit-silent-install-webpack.sh
 ```
 
 ## What's New in v1.3
