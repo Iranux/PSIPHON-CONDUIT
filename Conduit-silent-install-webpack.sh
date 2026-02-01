@@ -204,7 +204,7 @@ RED='\033[1;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-while true; do
+
     
     # --- HERE IS THE UPDATED BANNER ---
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -275,7 +275,7 @@ while true; do
             ;;
         *) ;;
     esac
-done
+
 EOF
 chmod +x "$MENU_SCRIPT"
 rm -f /usr/local/bin/conduit
