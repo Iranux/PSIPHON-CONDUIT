@@ -97,9 +97,62 @@ The menu is displayed **automatically after installation completes**.
 
 ---
 
+🔹 Intelligent IP & Geo-Based Access Control (Optional)
+
+A built-in traffic management system with menu toggle.
+
+Grace Period
+
+First 12 hours after installation
+
+All IP addresses allowed without restriction
+
+After Grace Period
+
+Iranian IPs
+
+Permanent access
+
+No forced disconnection
+
+Non-Iranian IPs
+
+Allowed to connect
+
+Automatically disconnected after 5 minutes
+
+Temporary block applied (reconnection required)
+
+This logic can be enabled or disabled at any time from the menu.
+
+---------------------------------------------------------
+
+User
+ │
+ ├─ One-liner / Script Execution
+ │
+ ├─ Pre-install Cleanup & System Update
+ │
+ ├─ Docker Installation & Enablement
+ │
+ ├─ Core Service Deployment
+ │
+ ├─ systemd Services
+ │    ├─ Main Service
+ │    └─ IP / Geo Management Service
+ │
+ └─ Interactive Management Menu
+--------------------------------------------------
 ## Installation
 
 ### Option 1 – One-Liner (Recommended)
 
 ```bash
 curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/conduit_auto.sh | sudo bash
+
+
+
+
+
+
+
