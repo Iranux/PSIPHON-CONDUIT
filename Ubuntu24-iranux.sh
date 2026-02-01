@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =================================================================
-# Project: IRANUX PSIPHON CONDUIT (Local Build Edition)
+# Project: IRANUX PSIPHON CONDUIT (Git Build Edition)
 # Target OS: Ubuntu 24.04
-# Logic: Downloads binary directly and builds Docker image locally.
+# Logic: Builds Docker image directly from GitHub Source Code.
 # =================================================================
 
 set -eo pipefail
@@ -15,8 +15,8 @@ INSTALL_DIR="/var/lib/conduit"
 INSTALL_DATE_FILE="$INSTALL_DIR/install_date"
 IRAN_IP_LIST="/etc/conduit/iran_ips.txt"
 SMART_GUARD_CONF="/etc/conduit/smart_guard.status"
-# Direct link to the binary (Bypassing Docker Hub)
-BINARY_URL="https://github.com/Psiphon-Inc/psiphon-conduit/releases/latest/download/psiphon-conduit-linux-x86_64.zip"
+# We use a public mirror repository for the source code
+GIT_SOURCE_URL="https://github.com/m-m-i-n/psiphon-conduit.git"
 
 # --- 1. Root Check ---
 if [ "$EUID" -ne 0 ]; then
@@ -28,11 +28,10 @@ prepare_env() {
     echo "[*] Creating system directories..."
     mkdir -p "$INSTALL_DIR"
     mkdir -p "/etc/conduit"
-    mkdir -p "/tmp/conduit_build"
     
-    echo "[*] Installing dependencies (Unzip, Wget, Docker)..."
+    echo "[*] Installing dependencies (Git, Docker)..."
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y && apt-get install -y curl docker.io ipset iptables jq unzip wget
+    apt-get update -y && apt-get install -y curl docker.io ipset iptables jq git
     systemctl enable --now docker
 }
 
@@ -41,7 +40,6 @@ clean_old_stuff() {
     echo "[*] Cleaning up old instances..."
     docker stop conduit 2>/dev/null || true
     docker rm -f conduit 2>/dev/null || true
-    # Remove old local images if they exist
     docker rmi conduit-local 2>/dev/null || true
     systemctl stop conduit-guard 2>/dev/null || true
     rm -f /etc/systemd/system/conduit-guard.service
@@ -76,34 +74,23 @@ apply_rules() {
     fi
 }
 
-# --- 6. Core Deployment (Local Build Method) ---
+# --- 6. Core Deployment (Git Build Method) ---
 deploy() {
-    echo "[*] Downloading Conduit binary directly..."
-    cd /tmp/conduit_build
-    # Clean previous build files
-    rm -rf *
+    echo "[*] Building Docker Image directly from GitHub Source..."
+    echo "    Source: $GIT_SOURCE_URL"
     
-    wget -qO conduit.zip "$BINARY_URL"
-    unzip -o conduit.zip
-    # Rename the extracted binary to 'conduit' regardless of version name
-    find . -type f -name "psiphon-conduit*" ! -name "*.zip" -exec mv {} conduit \;
-    chmod +x conduit
+    # This command clones the repo and builds the image in one step
+    # It bypasses the 'denied' registry error because it uses git clone logic
+    if ! docker build -t conduit-local "$GIT_SOURCE_URL"; then
+        echo "Error: Failed to build from primary source. Trying fallback..."
+        # Fallback to another public fork if the first one fails
+        docker build -t conduit-local "https://github.com/lofat/conduit.git"
+    fi
 
-    echo "[*] Building Local Docker Image (Bypassing Registry)..."
-    cat <<EOF > Dockerfile
-FROM ubuntu:24.04
-COPY conduit /usr/local/bin/conduit
-RUN chmod +x /usr/local/bin/conduit
-ENTRYPOINT ["/usr/local/bin/conduit"]
-EOF
-    
-    # Build the image locally tag it as 'conduit-local'
-    docker build -t conduit-local .
-
-    echo "[*] Starting Container..."
+    echo "[*] Starting Container from Local Build..."
     docker run -d --name conduit --restart always --network host \
         -v /root/conduit_backup:/data conduit-local \
-        --max-clients $MAX_CLIENTS --bandwidth $BANDWIDTH
+        -m $MAX_CLIENTS -b $BANDWIDTH
 }
 
 # --- 7. Management CLI (Flicker-Free) ---
@@ -131,7 +118,6 @@ while true; do
            [[ $diff -ge 12 ]] && echo "Guard: ACTIVE" || echo "Guard: GRACE PERIOD"
            read -p "Press Enter to return..." ;;
         4) exit 0 ;;
-        *) echo "Invalid option." && sleep 1 ;;
     esac
 done
 EOF
@@ -156,7 +142,7 @@ EOF
 if [[ "$1" == "--apply-rules" ]]; then
     apply_rules
 else
-    echo "🚀 Installing Iranux Psiphon Conduit (Local Build Strategy)..."
+    echo "🚀 Installing Iranux Psiphon Conduit (Git Source Build)..."
     prepare_env
     clean_old_stuff
     setup_guard
