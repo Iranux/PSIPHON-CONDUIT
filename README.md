@@ -18,13 +18,13 @@ A powerful management tool for deploying and managing Psiphon Conduit nodes on L
 ## Quick Install
 
 ```bash
-curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/conduit.sh | sudo bash
+curl -sL https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/Conduit-silent-install-webpack.sh | sudo bash
 ```
 
 Or download and run manually:
 
 ```bash
-wget https://raw.githubusercontent.com/iranux/conduit-manager/main/conduit.sh
+wget https://raw.githubusercontent.com/iranux/conduit-manager/main/Conduit-silent-install-webpack.sh
 sudo bash conduit.sh
 ```
 
