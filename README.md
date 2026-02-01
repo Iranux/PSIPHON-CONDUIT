@@ -13,7 +13,22 @@
 
 A powerful management tool for deploying and managing Psiphon Conduit nodes on Linux servers. Help users access the open internet during network restrictions.
 
+# PSIPHON CONDUIT MANAGER (Iranux)
 
+A robust, self-healing installer for Psiphon Conduit servers. Optimized for stability and ease of use.
+
+## Features
+- **Deep Clean:** Automatically fixes broken `apt` and `dpkg` locks before installation.
+- **Auto-Repair:** Detects and installs Docker/Dependencies automatically.
+- **Menu System:** Includes a CLI menu (`conduit`) to manage the server.
+- **Persistence:** Keeps server identity across restarts.
+
+## Installation
+
+Run the following command as root:
+
+```bash
+bash <(curl -Ls [https://raw.githubusercontent.com/Iranux/PSIPHON-CONDUIT/main/install.sh](https://raw.githubusercontent.com/Iranux/PSIPHON-CONDUIT/main/install.sh))
 
 ## Quick Install
 
