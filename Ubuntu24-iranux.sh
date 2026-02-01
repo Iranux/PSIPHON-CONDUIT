@@ -3,7 +3,7 @@
 # =================================================================
 # Project: IRANUX PSIPHON CONDUIT (Local Build Edition)
 # Target OS: Ubuntu 24.04
-# Logic: Downloads binary directly from GitHub to avoid Docker Denied errors.
+# Logic: Downloads binary directly and builds Docker image locally.
 # =================================================================
 
 set -eo pipefail
@@ -15,7 +15,7 @@ INSTALL_DIR="/var/lib/conduit"
 INSTALL_DATE_FILE="$INSTALL_DIR/install_date"
 IRAN_IP_LIST="/etc/conduit/iran_ips.txt"
 SMART_GUARD_CONF="/etc/conduit/smart_guard.status"
-# URL for the official/reliable binary
+# Direct link to the binary (Bypassing Docker Hub)
 BINARY_URL="https://github.com/Psiphon-Inc/psiphon-conduit/releases/latest/download/psiphon-conduit-linux-x86_64.zip"
 
 # --- 1. Root Check ---
@@ -24,14 +24,13 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # --- 2. Environment Preparation ---
-# Creating directories FIRST to prevent path errors.
 prepare_env() {
     echo "[*] Creating system directories..."
     mkdir -p "$INSTALL_DIR"
     mkdir -p "/etc/conduit"
     mkdir -p "/tmp/conduit_build"
     
-    echo "[*] Installing dependencies (Docker, Ipset, Unzip)..."
+    echo "[*] Installing dependencies (Unzip, Wget, Docker)..."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y && apt-get install -y curl docker.io ipset iptables jq unzip wget
     systemctl enable --now docker
@@ -42,6 +41,8 @@ clean_old_stuff() {
     echo "[*] Cleaning up old instances..."
     docker stop conduit 2>/dev/null || true
     docker rm -f conduit 2>/dev/null || true
+    # Remove old local images if they exist
+    docker rmi conduit-local 2>/dev/null || true
     systemctl stop conduit-guard 2>/dev/null || true
     rm -f /etc/systemd/system/conduit-guard.service
 }
@@ -75,23 +76,28 @@ apply_rules() {
     fi
 }
 
-# --- 6. Core Deployment (Local Binary Method) ---
-# This mimics the "Original Code" behavior to avoid Docker Registry Denied errors.
+# --- 6. Core Deployment (Local Build Method) ---
 deploy() {
-    echo "[*] Downloading Conduit binary from GitHub..."
+    echo "[*] Downloading Conduit binary directly..."
     cd /tmp/conduit_build
+    # Clean previous build files
+    rm -rf *
+    
     wget -qO conduit.zip "$BINARY_URL"
-    unzip -o conduit.zip && rm conduit.zip
-    mv psiphon-conduit-linux-x86_64 conduit
+    unzip -o conduit.zip
+    # Rename the extracted binary to 'conduit' regardless of version name
+    find . -type f -name "psiphon-conduit*" ! -name "*.zip" -exec mv {} conduit \;
     chmod +x conduit
 
-    echo "[*] Building local Docker image (No Pull Required)..."
+    echo "[*] Building Local Docker Image (Bypassing Registry)..."
     cat <<EOF > Dockerfile
 FROM ubuntu:24.04
 COPY conduit /usr/local/bin/conduit
 RUN chmod +x /usr/local/bin/conduit
 ENTRYPOINT ["/usr/local/bin/conduit"]
 EOF
+    
+    # Build the image locally tag it as 'conduit-local'
     docker build -t conduit-local .
 
     echo "[*] Starting Container..."
@@ -125,6 +131,7 @@ while true; do
            [[ $diff -ge 12 ]] && echo "Guard: ACTIVE" || echo "Guard: GRACE PERIOD"
            read -p "Press Enter to return..." ;;
         4) exit 0 ;;
+        *) echo "Invalid option." && sleep 1 ;;
     esac
 done
 EOF
@@ -149,12 +156,15 @@ EOF
 if [[ "$1" == "--apply-rules" ]]; then
     apply_rules
 else
-    echo "🚀 Installing Iranux Psiphon Conduit (Local Build)..."
+    echo "🚀 Installing Iranux Psiphon Conduit (Local Build Strategy)..."
     prepare_env
     clean_old_stuff
     setup_guard
     deploy
     apply_rules
     finalize
-    echo "✅ Installation Success! Type 'conduit' to manage."
+    echo "------------------------------------------------"
+    echo "✅ INSTALLATION SUCCESSFUL!"
+    echo "Type 'conduit' to manage."
+    echo "------------------------------------------------"
 fi
