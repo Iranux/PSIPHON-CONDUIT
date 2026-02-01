@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =================================================================
-# Project: PSIPHON CONDUIT MANAGER (Fixed Menu & Service)
+# Project: PSIPHON CONDUIT (ORIGINAL METHOD RESTRUCTRED)
 # Target OS: Ubuntu 24.04
-# Features: Auto-Menu, Crash Detection, Git Build
+# Logic: Direct Binary Download + Local Build (No Password Required)
 # =================================================================
 
 set -eo pipefail
@@ -15,8 +15,6 @@ INSTALL_DIR="/var/lib/conduit"
 INSTALL_DATE_FILE="$INSTALL_DIR/install_date"
 IRAN_IP_LIST="/etc/conduit/iran_ips.txt"
 SMART_GUARD_CONF="/etc/conduit/smart_guard.status"
-# Source Repo (Clone of original)
-GIT_SOURCE_URL="https://github.com/m-m-i-n/psiphon-conduit.git"
 REPO_RAW_URL="https://raw.githubusercontent.com/iranux/PSIPHON-CONDUIT/main/Ubuntu24-iranux.sh"
 
 # Colors
@@ -31,26 +29,29 @@ if [ "$EUID" -ne 0 ]; then
     exec sudo bash "$0" "$@"
 fi
 
-# --- 2. Environment Preparation ---
+# --- 2. PRE-INSTALLATION CLEANUP (Deleted Everything Old) ---
+clean_old_stuff() {
+    echo -e "${YELLOW}[*] Nuclear Clean: Removing old containers and files...${NC}"
+    docker stop conduit 2>/dev/null || true
+    docker rm -f conduit 2>/dev/null || true
+    # Remove old images to force fresh build
+    docker rmi conduit-local 2>/dev/null || true
+    systemctl stop conduit-guard 2>/dev/null || true
+    rm -f /etc/systemd/system/conduit-guard.service
+    rm -rf /tmp/conduit_build
+}
+
+# --- 3. Environment Preparation ---
 prepare_env() {
     echo -e "${CYAN}[*] Creating system directories...${NC}"
     mkdir -p "$INSTALL_DIR"
     mkdir -p "/etc/conduit"
+    mkdir -p "/tmp/conduit_build"
     
-    echo -e "${CYAN}[*] Installing dependencies...${NC}"
+    echo -e "${CYAN}[*] Installing dependencies (Wget, Unzip, Docker)...${NC}"
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y && apt-get install -y curl docker.io ipset iptables jq git qrencode
+    apt-get update -y && apt-get install -y curl docker.io ipset iptables jq unzip wget
     systemctl enable --now docker
-}
-
-# --- 3. Nuclear Clean ---
-clean_old_stuff() {
-    echo -e "${YELLOW}[*] Cleaning up old instances...${NC}"
-    docker stop conduit 2>/dev/null || true
-    docker rm -f conduit 2>/dev/null || true
-    # We keep the image if it exists to save time, unless forced
-    systemctl stop conduit-guard 2>/dev/null || true
-    rm -f /etc/systemd/system/conduit-guard.service
 }
 
 # --- 4. Smart Guard Setup ---
@@ -81,49 +82,39 @@ apply_rules() {
     fi
 }
 
-# --- 6. Core Deployment (Git Build + Health Check) ---
+# --- 6. Core Deployment (THE ORIGINAL METHOD) ---
 deploy() {
-    echo -e "${CYAN}[*] Building Docker Image from Source...${NC}"
-    # Force rebuild to ensure we have a fresh image
-    if ! docker build -t conduit-local "$GIT_SOURCE_URL"; then
-         echo -e "${YELLOW}Build failed. Trying fallback repo...${NC}"
-         docker build -t conduit-local "https://github.com/lofat/conduit.git"
-    fi
+    echo -e "${CYAN}[*] Downloading Official Psiphon Binary (No Auth Required)...${NC}"
+    cd /tmp/conduit_build
+    
+    # Direct download link for the binary (Bypassing Docker Hub issues)
+    wget -qO conduit.zip "https://github.com/Psiphon-Inc/psiphon-conduit/releases/latest/download/psiphon-conduit-linux-x86_64.zip"
+    
+    echo -e "${CYAN}[*] Extracting binary...${NC}"
+    unzip -o conduit.zip
+    # Find and rename the binary accurately
+    find . -type f -name "psiphon-conduit*" ! -name "*.zip" -exec mv {} conduit \;
+    chmod +x conduit
+
+    echo -e "${GREEN}[*] Building Local Docker Image...${NC}"
+    # Creating a lightweight Dockerfile on the fly
+    cat <<EOF > Dockerfile
+FROM ubuntu:24.04
+COPY conduit /usr/local/bin/conduit
+RUN chmod +x /usr/local/bin/conduit
+ENTRYPOINT ["/usr/local/bin/conduit"]
+EOF
+    
+    # Build image locally tagged as 'conduit-local'
+    docker build -t conduit-local .
 
     echo -e "${GREEN}[*] Starting Container...${NC}"
-    
-    # Try Method 1: Standard arguments
     docker run -d --name conduit --restart always --network host \
         -v /root/conduit_backup:/data conduit-local \
-        -m $MAX_CLIENTS -b $BANDWIDTH
-
-    echo -e "${CYAN}[*] Verifying service health... (Waiting 5s)${NC}"
-    sleep 5
-
-    # Health Check
-    if ! docker ps | grep -q conduit; then
-        echo -e "${RED}[!] Service failed to start! Checking logs...${NC}"
-        docker logs conduit
-        echo -e "${YELLOW}[*] Retrying with alternative launch parameters...${NC}"
-        
-        docker rm -f conduit
-        # Try Method 2: Environment Variables (Common fallback)
-        docker run -d --name conduit --restart always --network host \
-            -v /root/conduit_backup:/data \
-            -e MAX_CLIENTS=$MAX_CLIENTS -e BANDWIDTH=$BANDWIDTH \
-            conduit-local
-            
-        sleep 5
-        if ! docker ps | grep -q conduit; then
-             echo -e "${RED}[FATAL] Service still failed. Showing last logs:${NC}"
-             docker logs conduit
-             exit 1
-        fi
-    fi
-    echo -e "${GREEN}[+] Service is ACTIVE and RUNNING.${NC}"
+        --max-clients $MAX_CLIENTS --bandwidth $BANDWIDTH
 }
 
-# --- 7. Finalize & Menu ---
+# --- 7. Original Menu & Finalize ---
 finalize() {
     cat <<'EOF' > /usr/local/bin/conduit
 #!/bin/bash
@@ -141,46 +132,53 @@ while true; do
     echo ""
     echo -e "  ${GREEN}1.${NC} 📈 Dashboard (Live)"
     echo -e "  ${GREEN}2.${NC} 📋 Logs"
-    echo -e "  ${GREEN}3.${NC} 🔄 Restart Service"
-    echo -e "  ${GREEN}4.${NC} 🗑️  Uninstall"
-    echo "  --------------------------------"
-    echo -e "  ${GREEN}9.${NC} 🛡️  Smart Guard Status"
+    echo -e "  ${GREEN}3.${NC} ⚙️  Settings (Restart with Defaults)"
+    echo -e "  ${GREEN}4.${NC} 📱 Telegram Setup (Managed via config)"
+    echo -e "  ${GREEN}5.${NC} 🔄 Restart Service"
+    echo -e "  ${GREEN}6.${NC} 🔑 Show config"
+    echo -e "  ${GREEN}7.${NC} 🛡️  Smart Guard Status"
+    echo -e "  ${GREEN}8.${NC} 🗑️  Uninstall"
     echo -e "  ${RED}0. Exit${NC}"
     echo ""
     
-    # Check status for footer
+    # Check Service Status
     if docker ps | grep -q conduit; then
-        echo -e "  Service Status: ${GREEN}● Active${NC}"
+        echo -e "  Status: ${GREEN}● RUNNING${NC}"
     else
-        echo -e "  Service Status: ${RED}● Stopped${NC}"
+        echo -e "  Status: ${RED}● STOPPED${NC}"
     fi
     echo ""
-    
+
     read -p "  Choice: " opt
     case $opt in
         1) watch -n 1 "docker stats conduit --no-stream" ;;
         2) docker logs -f --tail 100 conduit ;;
-        3) docker restart conduit && echo "Service Restarted." && sleep 2 ;;
-        4) 
-           read -p "Uninstall? (y/n): " sure
+        3) docker restart conduit && echo "Restarted." && sleep 2 ;;
+        4) echo "Config is in /root/conduit_backup"; read -p "Press Enter..." ;;
+        5) docker restart conduit && echo "Service Restarted." && sleep 2 ;;
+        6) 
+           docker logs conduit 2>&1 | grep -i "server config" | tail -n 1
+           read -p "Press Enter..." ;;
+        7) 
+           start_t=$(cat /var/lib/conduit/install_date)
+           diff=$(( ($(date +%s) - start_t) / 3600 ))
+           echo "--------------------------------"
+           echo -e "  ⏳ Server Uptime: ${CYAN}$diff hours${NC}"
+           if [[ $diff -ge 12 ]]; then
+               echo -e "  🛡️  Status: ${RED}ACTIVE${NC} (Non-Iran IPs restricted)"
+           else
+               echo -e "  🔓 Status: ${GREEN}GRACE PERIOD${NC} (Open Access)"
+           fi
+           echo "--------------------------------"
+           read -p "Press Enter..." ;;
+        8) 
+           read -p "Are you sure? (y/n): " sure
            if [[ "$sure" == "y" ]]; then
                docker rm -f conduit
                rm /usr/local/bin/conduit
                echo "Uninstalled."
                exit 0
            fi ;;
-        9) 
-           start_t=$(cat /var/lib/conduit/install_date)
-           diff=$(( ($(date +%s) - start_t) / 3600 ))
-           echo "--------------------------------"
-           echo -e "  ⏳ Server Uptime: ${CYAN}$diff hours${NC}"
-           if [[ $diff -ge 12 ]]; then
-               echo -e "  🛡️  Status: ${RED}ACTIVE${NC} (Restricted Mode)"
-           else
-               echo -e "  🔓 Status: ${GREEN}GRACE PERIOD${NC} (Open Access)"
-           fi
-           echo "--------------------------------"
-           read -p "Press Enter..." ;;
         0) exit 0 ;;
         *) echo "Invalid option." && sleep 1 ;;
     esac
@@ -208,15 +206,20 @@ if [[ "$1" == "--apply-rules" ]]; then
     apply_rules
 else
     echo -e "${GREEN}🚀 Starting Installation...${NC}"
-    prepare_env
+    # 1. Clean FIRST
     clean_old_stuff
+    # 2. Prepare Environment
+    prepare_env
+    # 3. Setup Logic
     setup_guard
+    # 4. Deploy (Original Method)
     deploy
+    # 5. Apply Rules
     apply_rules
+    # 6. Finalize UI
     finalize
     
     echo -e "${GREEN}✅ Installation Complete! Launching Menu...${NC}"
     sleep 2
-    # Auto-launch the menu
     /usr/local/bin/conduit
 fi
