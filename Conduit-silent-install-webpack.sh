@@ -1,37 +1,29 @@
 #!/bin/bash
 #
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║   🚀 PSIPHON CONDUIT MANAGER v1.8 (DEEP CLEAN + FRESH INSTALL)   ║
+# ║   🚀 PSIPHON CONDUIT MANAGER v6.0 (FINAL FIX)                    ║
 # ║                                                                   ║
-# ║  • Kills stuck apt processes                                      ║
-# ║  • Removes broken lock files                                      ║
-# ║  • Fixes interrupted dpkg installs                                ║
-# ║  • Wipes previous conduit containers for a fresh start            ║
+# ║  • PRE-INSTALL: Forcefully kills ALL old background scripts.      ║
+# ║  • MENU: 100% Static. No timers. No refresh loops.                ║
+# ║  • BANNER: Correctly updated to v6.0.                             ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 #
 
-# --- AUTO ELEVATE TO ROOT ---
+# --- 1. ROOT CHECK ---
 if [ "$EUID" -ne 0 ]; then
-    if [ -f "$0" ]; then
-        echo "Requesting root privileges..."
-        exec sudo bash "$0" "$@"
-    else
-        echo "Error: This script needs root."
-        echo "Please run with sudo:  curl ... | sudo bash"
-        exit 1
-    fi
+    echo "Please run as root: sudo bash $0"
+    exit 1
 fi
 
-# Stop apt from asking questions
 export DEBIAN_FRONTEND=noninteractive
-
-# Exit on critical errors
 set -e
 
-VERSION="1.8"
+# --- 2. CONFIGURATION ---
 CONDUIT_IMAGE="ghcr.io/ssmirr/conduit/conduit:latest"
-INSTALL_DIR="${INSTALL_DIR:-/opt/conduit}"
+INSTALL_DIR="/opt/conduit"
 BACKUP_DIR="$INSTALL_DIR/backups"
+MENU_SCRIPT="$INSTALL_DIR/menu.sh"
+FW_SCRIPT="$INSTALL_DIR/firewall.sh"
 
 # Colors
 GREEN='\033[0;32m'
@@ -42,204 +34,260 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 #═══════════════════════════════════════════════════════════════════════
-# Helpers
+# 3. AGGRESSIVE CLEANUP (THE FIX FOR FLICKERING)
 #═══════════════════════════════════════════════════════════════════════
+echo -e "${RED}[!!!] KILLING OLD PROCESSES...${NC}"
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
-log_error() { echo -e "${RED}[✗]${NC} $1"; }
+# Stop service first
+systemctl stop conduit.service 2>/dev/null || true
+systemctl disable conduit.service 2>/dev/null || true
 
-detect_os() {
-    OS="unknown"
-    PKG_MANAGER="unknown"
-    if [ -f /etc/os-release ]; then . /etc/os-release; OS="$ID"; else OS=$(uname -s); fi
-    
-    case "$OS" in
-        ubuntu|debian|linuxmint|kali) PKG_MANAGER="apt" ;;
-        centos|rhel|fedora|almalinux) PKG_MANAGER="dnf" ;;
-        alpine) PKG_MANAGER="apk" ;;
-        *) PKG_MANAGER="unknown" ;;
-    esac
-    log_info "Detected OS: $OS ($PKG_MANAGER)"
-}
+# Kill any script that looks like a conduit manager
+# This stops the old loops running in background
+pkill -9 -f "conduit" || true
+pkill -9 -f "menu.sh" || true
+pkill -9 -f "watch" || true
+pkill -9 -f "sleep" || true  # Safe on a dedicated server
 
-#═══════════════════════════════════════════════════════════════════════
-# 1. DEEP CLEAN & REPAIR SYSTEM
-#═══════════════════════════════════════════════════════════════════════
+# Kill stuck pkg managers
+killall -9 apt apt-get dpkg 2>/dev/null || true
+rm -f /var/lib/apt/lists/lock 
+rm -f /var/cache/apt/archives/lock
+rm -f /var/lib/dpkg/lock*
 
-deep_clean_system() {
-    log_warn "Starting Deep Clean & System Repair..."
-
-    # 1. Kill stuck package managers
-    log_info "Killing stuck apt/dpkg processes..."
-    killall apt apt-get dpkg 2>/dev/null || true
-    sleep 2
-
-    # 2. Fix APT/DPKG specifics
-    if [ "$PKG_MANAGER" = "apt" ]; then
-        # Remove lock files if they exist (Risky but necessary for stuck systems)
-        rm -f /var/lib/apt/lists/lock 
-        rm -f /var/cache/apt/archives/lock
-        rm -f /var/lib/dpkg/lock*
-
-        log_info "Repairing dpkg database..."
-        dpkg --configure -a || true
-        
-        log_info "Fixing broken dependencies..."
-        apt-get install -f -y || true
-        
-        log_info "Cleaning apt cache..."
-        apt-get clean || true
-        apt-get autoremove -y || true
-        
-        log_info "Updating package lists..."
-        apt-get update -q -y >/dev/null 2>&1 || true
-    fi
-
-    # 3. Wipe previous Conduit Installation
-    log_info "Wiping previous Conduit installation..."
-    if command -v docker &>/dev/null; then
-        # Stop and remove all conduit containers
-        docker stop conduit 2>/dev/null || true
-        docker rm conduit 2>/dev/null || true
-        # Also remove numbered instances just in case
-        docker stop $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
-        docker rm $(docker ps -a -q --filter name=conduit) 2>/dev/null || true
-        
-        # Remove old menu link
-        rm -f /usr/local/bin/conduit
-    fi
-    
-    log_success "System cleaned and ready for fresh install."
-}
+echo -e "${GREEN}[✓] Background cleared.${NC}"
 
 #═══════════════════════════════════════════════════════════════════════
-# 2. STANDARD INSTALLATION
+# 4. INSTALL DEPENDENCIES
 #═══════════════════════════════════════════════════════════════════════
-
-install_dependencies() {
-    log_info "Installing dependencies..."
-    local pkgs="curl gawk tcpdump geoip-bin geoip-database qrencode"
-    
-    # Simple install loop
-    if [ "$PKG_MANAGER" = "apt" ]; then
-        apt-get install -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $pkgs || true
-    elif [ "$PKG_MANAGER" = "apk" ]; then
-        apk add --no-cache curl gawk tcpdump geoip qrencode || true
-    fi
-}
-
-install_docker() {
-    if command -v docker &>/dev/null; then
-        log_success "Docker is present."
-        return 0
-    fi
-    log_info "Installing Docker..."
-    if [ "$PKG_MANAGER" = "alpine" ]; then
-        apk add --no-cache docker docker-cli-compose || true
-        service docker start || true
-    else
-        if ! curl -fsSL https://get.docker.com | sh >/dev/null 2>&1; then
-             log_warn "Docker script failed, trying fallback..."
-             if [ "$PKG_MANAGER" = "apt" ]; then apt-get install -y docker.io || true; fi
-        fi
-        systemctl start docker >/dev/null 2>&1 || true
-        systemctl enable docker >/dev/null 2>&1 || true
-    fi
-}
-
-# Keep the identity if we can, otherwise it's a fresh start
-check_restore() {
-    [ ! -d "$BACKUP_DIR" ] && return 0
-    local backup=$(ls -t "$BACKUP_DIR"/conduit_key_*.json 2>/dev/null | head -1)
-    [ -z "$backup" ] && return 0
-    
-    log_info "Found previous backup. Restoring Identity..."
-    docker volume create conduit-data >/dev/null 2>&1 || true
-    if docker run --rm -v conduit-data:/data -v "$BACKUP_DIR":/bkp alpine sh -c "cp /bkp/$(basename "$backup") /data/conduit_key.json && chown 1000:1000 /data/conduit_key.json"; then
-        log_success "Identity restored."
-    fi
-}
-
-run_conduit() {
-    log_info "Starting Conduit (Fresh Container)..."
-    
-    # Ensure volume exists and permissions are correct
-    docker volume create conduit-data >/dev/null 2>&1 || true
-    docker run --rm -v conduit-data:/data alpine chown -R 1000:1000 /data >/dev/null 2>&1 || true
-
-    if docker run -d \
-        --name conduit \
-        --restart unless-stopped \
-        --log-opt max-size=10m \
-        -v conduit-data:/home/conduit/data \
-        --network host \
-        "$CONDUIT_IMAGE" \
-        start --max-clients 50 --bandwidth 5 --stats-file >/dev/null; then
-        log_success "Conduit Started Successfully."
-    else
-        log_error "Failed to start container."
-        exit 1
-    fi
-}
-
-save_conf() {
-    mkdir -p "$INSTALL_DIR"
-    echo "MAX_CLIENTS=50" > "$INSTALL_DIR/settings.conf"
-    echo "BANDWIDTH=5" >> "$INSTALL_DIR/settings.conf"
-    echo "CONTAINER_COUNT=1" >> "$INSTALL_DIR/settings.conf"
-}
-
-create_menu() {
-    log_info "Setting up Management Menu..."
-    local menu_path="$INSTALL_DIR/conduit"
-    
-    # Try download, fallback to local
-    if curl -sL "https://raw.githubusercontent.com/SamNet-dev/conduit-manager/main/conduit.sh" -o "$menu_path" 2>/dev/null; then
-        chmod +x "$menu_path"
-    else
-        log_warn "Menu download failed. Using minimal menu."
-        cat > "$menu_path" << 'EOF'
-#!/bin/bash
-echo "--- Conduit Fallback Menu ---"
-echo "1) Check Status: docker ps -f name=conduit"
-echo "2) Restart:      docker restart conduit"
-echo "3) Logs:         docker logs --tail 20 conduit"
-EOF
-        chmod +x "$menu_path"
-    fi
-
-    rm -f /usr/local/bin/conduit
-    ln -s "$menu_path" /usr/local/bin/conduit
-}
-
-#═══════════════════════════════════════════════════════════════════════
-# MAIN EXECUTION
-#═══════════════════════════════════════════════════════════════════════
-
-detect_os
-
-# STEP 1: FIX EVERYTHING
-deep_clean_system
-
-# STEP 2: INSTALL REQUISITES
-install_dependencies
-install_docker
-
-# STEP 3: RUN APP
-check_restore
-run_conduit
-save_conf
-create_menu
-
-echo ""
-log_success "FRESH INSTALLATION COMPLETE."
-echo "------------------------------------------------"
-echo "Opening menu in 3 seconds..."
-echo "------------------------------------------------"
-sleep 3
-
-if [ -f "/usr/local/bin/conduit" ]; then
-    exec /usr/local/bin/conduit menu
+echo -e "${BLUE}[INFO] Installing Dependencies...${NC}"
+if [ -f /etc/debian_version ]; then
+    dpkg --configure -a >/dev/null 2>&1 || true
+    apt-get update -q -y >/dev/null 2>&1 || true
+    apt-get install -y -q curl gawk tcpdump geoip-bin geoip-database qrencode ipset >/dev/null 2>&1 || true
+elif [ -f /etc/alpine-release ]; then
+    apk add --no-cache curl gawk tcpdump geoip qrencode ipset >/dev/null 2>&1 || true
 fi
+
+# Clean old installation files
+if command -v docker &>/dev/null; then
+    docker stop conduit 2>/dev/null || true
+    docker rm conduit 2>/dev/null || true
+fi
+rm -rf /usr/local/bin/conduit
+rm -rf "$INSTALL_DIR/menu.sh"
+
+#═══════════════════════════════════════════════════════════════════════
+# 5. DOCKER & RESTORE
+#═══════════════════════════════════════════════════════════════════════
+echo -e "${BLUE}[INFO] Setting up Docker...${NC}"
+if ! command -v docker &>/dev/null; then
+    curl -fsSL https://get.docker.com | sh >/dev/null 2>&1 || true
+    systemctl start docker >/dev/null 2>&1 || true
+    systemctl enable docker >/dev/null 2>&1 || true
+fi
+
+echo -e "${BLUE}[INFO] Restoring Backup...${NC}"
+mkdir -p "$INSTALL_DIR"
+if [ -d "$BACKUP_DIR" ]; then
+    BACKUP_FILE=$(ls -t "$BACKUP_DIR"/conduit_key_*.json 2>/dev/null | head -1)
+    if [ -n "$BACKUP_FILE" ]; then
+        echo -e "${GREEN}[✓] Restoring Identity...${NC}"
+        docker volume create conduit-data >/dev/null 2>&1 || true
+        docker run --rm -v conduit-data:/data -v "$BACKUP_DIR":/bkp alpine \
+            sh -c "cp /bkp/$(basename "$BACKUP_FILE") /data/conduit_key.json && chown 1000:1000 /data/conduit_key.json"
+    fi
+fi
+
+#═══════════════════════════════════════════════════════════════════════
+# 6. START CONDUIT (50 Clients / 5 Mbps)
+#═══════════════════════════════════════════════════════════════════════
+echo -e "${BLUE}[INFO] Starting Service...${NC}"
+docker volume create conduit-data >/dev/null 2>&1 || true
+docker run --rm -v conduit-data:/data alpine chown -R 1000:1000 /data >/dev/null 2>&1 || true
+
+docker run -d \
+    --name conduit \
+    --restart unless-stopped \
+    --log-opt max-size=10m \
+    -v conduit-data:/home/conduit/data \
+    --network host \
+    "$CONDUIT_IMAGE" \
+    start --max-clients 50 --bandwidth 5 --stats-file >/dev/null
+
+# Save Config
+echo "MAX_CLIENTS=50" > "$INSTALL_DIR/settings.conf"
+echo "BANDWIDTH=5" >> "$INSTALL_DIR/settings.conf"
+
+#═══════════════════════════════════════════════════════════════════════
+# 7. AUTO-START (Systemd)
+#═══════════════════════════════════════════════════════════════════════
+cat > /etc/systemd/system/conduit.service << EOF
+[Unit]
+Description=Psiphon Conduit
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker start conduit
+ExecStop=/usr/bin/docker stop conduit
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+if command -v systemctl &>/dev/null; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable conduit.service >/dev/null 2>&1 || true
+    systemctl start conduit.service >/dev/null 2>&1 || true
+fi
+
+#═══════════════════════════════════════════════════════════════════════
+# 8. FIREWALL SCRIPT (SMART)
+#═══════════════════════════════════════════════════════════════════════
+cat << 'EOF' > "$FW_SCRIPT"
+#!/bin/bash
+IP_LIST="https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ir.cidr"
+IPSET="iran_ips"
+CYAN='\033[1;36m'
+GREEN='\033[1;32m'
+NC='\033[0m'
+
+do_enable() {
+    echo -e "${CYAN}Downloading Iran IP List...${NC}"
+    if ! curl -sL "$IP_LIST" -o /tmp/ir.cidr; then echo "Download failed"; return; fi
+    
+    ipset create $IPSET hash:net -exist
+    ipset flush $IPSET
+    while read line; do [[ "$line" =~ ^# ]] || ipset add $IPSET "$line" -exist; done < /tmp/ir.cidr
+    
+    iptables -F INPUT
+    # Essential
+    iptables -A INPUT -i lo -j ACCEPT
+    iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+    
+    # Iran VIP
+    iptables -A INPUT -m set --match-set $IPSET src -j ACCEPT
+    
+    # Others Throttled (Max 3 new connections per min)
+    iptables -A INPUT -m state --state NEW -m recent --set
+    iptables -A INPUT -m state --state NEW -m recent --update --seconds 60 --hitcount 3 -j DROP
+    iptables -A INPUT -j ACCEPT
+    
+    echo -e "${GREEN}SMART FIREWALL ENABLED.${NC}"
+}
+
+do_disable() {
+    iptables -P INPUT ACCEPT
+    iptables -F INPUT
+    echo -e "${GREEN}FIREWALL DISABLED.${NC}"
+}
+
+case "$1" in
+    enable) do_enable ;;
+    disable) do_disable ;;
+esac
+EOF
+chmod +x "$FW_SCRIPT"
+
+#═══════════════════════════════════════════════════════════════════════
+# 9. STATIC MENU (CORRECTED VERSION LABEL)
+#═══════════════════════════════════════════════════════════════════════
+cat << 'EOF' > "$MENU_SCRIPT"
+#!/bin/bash
+FW="/opt/conduit/firewall.sh"
+CYAN='\033[1;36m'
+GREEN='\033[1;32m'
+RED='\033[1;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+while true; do
+    
+    # --- HERE IS THE UPDATED BANNER ---
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║      🚀 CONDUIT MANAGER v6.0 (FINAL FIX)                   ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Status Checks
+    if docker ps | grep -q conduit; then
+        echo -e "  SERVICE:  ${GREEN}RUNNING${NC}"
+    else
+        echo -e "  SERVICE:  ${RED}STOPPED${NC}"
+    fi
+
+    if iptables -L INPUT 2>/dev/null | grep -q "match-set iran_ips"; then
+        echo -e "  FILTER:   ${GREEN}SMART (Iran VIP)${NC}"
+    else
+        echo -e "  FILTER:   ${YELLOW}OPEN (No Limits)${NC}"
+    fi
+
+    echo ""
+    echo "  [1] 👥 Active Users (Snapshot)"
+    echo "  [2] 📄 View Logs"
+    echo "  [3] 🔄 Restart Service"
+    echo "  [4] 🛑 Stop Service"
+    echo "  -----------------------"
+    echo "  [5] 🧠 Enable Smart Filter"
+    echo "  [6] 🔓 Disable Filter"
+    echo "  -----------------------"
+    echo "  [0] 🚪 Exit"
+    echo ""
+    
+    # WAITS FOREVER - NO FLICKER
+    read -p "  Select option: " choice
+    
+    case $choice in
+        1)
+            echo -e "\n${CYAN}--- USERS SNAPSHOT ---${NC}"
+            ss -tun state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | grep -vE "127.0.0.1|\[::1\]" | sort | uniq -c | sort -nr | head -n 15
+            echo ""
+            read -p "Press Enter to return..."
+            ;;
+        2) 
+            echo -e "\n${CYAN}--- LOGS (Ctrl+C to exit) ---${NC}"
+            docker logs -f --tail 50 conduit
+            ;;
+        3)
+            echo "Restarting..."
+            docker restart conduit
+            sleep 1
+            ;;
+        4)
+            echo "Stopping..."
+            docker stop conduit
+            sleep 1
+            ;;
+        5)
+            bash "$FW" enable
+            read -p "Press Enter to return..."
+            ;;
+        6)
+            bash "$FW" disable
+            read -p "Press Enter to return..."
+            ;;
+        0) 
+            clear
+            exit 0 
+            ;;
+        *) ;;
+    esac
+done
+EOF
+chmod +x "$MENU_SCRIPT"
+rm -f /usr/local/bin/conduit
+ln -s "$MENU_SCRIPT" /usr/local/bin/conduit
+
+#═══════════════════════════════════════════════════════════════════════
+# 10. FINISH
+#═══════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${GREEN}[✓] INSTALLATION COMPLETE.${NC}"
+echo "------------------------------------------------"
+echo -e " To open menu: ${YELLOW}conduit${NC}"
+echo "------------------------------------------------"
+sleep 2
+exec /usr/local/bin/conduit
