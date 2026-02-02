@@ -1390,7 +1390,7 @@ run_conduit_container() {
 print_header() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════════╗"
-    printf "║                🚀 PSIPHON CONDUIT MANAGER v%-5s                  ║\n" "${VERSION}"
+    printf "║   🚀 PSIPHON CONDUIT MANAGER Iranux version v${VERSION}                ║\n" "${VERSION}"
     echo "╚═══════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
